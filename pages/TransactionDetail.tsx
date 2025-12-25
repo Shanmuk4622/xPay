@@ -1,10 +1,10 @@
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import QRCode from 'qrcode';
 import { 
   ArrowLeft, 
@@ -42,7 +42,32 @@ import {
   Terminal,
   Shield,
   Layers,
-  FileDown
+  FileDown,
+  UserRoundCheck,
+  ShieldHalf,
+  MessageSquare,
+  Send,
+  Bot,
+  Radar,
+  GanttChart,
+  Target,
+  BarChart3,
+  Dna,
+  SearchCode,
+  Clock,
+  ExternalLink,
+  Cpu,
+  RefreshCw,
+  Inbox,
+  Tag,
+  X,
+  Plus,
+  ChevronDown,
+  ChevronUp,
+  Database,
+  ArrowRight,
+  Trash2,
+  ListTodo
 } from 'lucide-react';
 
 interface Transaction {
@@ -55,6 +80,7 @@ interface Transaction {
   updated_at: string;
   created_by: string;
   audit_tag?: string | null;
+  tags?: string[] | null;
   secure_id?: string | null;
   signature?: string | null;
   creator?: {
@@ -74,6 +100,24 @@ interface ActivityLog {
   };
 }
 
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+interface AuditReport {
+  riskScore: number;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  vectors: {
+    velocity: string;
+    magnitude: string;
+    authenticity: string;
+  };
+  patterns: string[];
+  anomalies: string[];
+  verdict: string;
+}
+
 export default function TransactionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -86,28 +130,64 @@ export default function TransactionDetail() {
   const [copied, setCopied] = useState(false);
   const [copiedSecure, setCopiedSecure] = useState(false);
   
+  // Chat & Consultation State
+  const [isConsulting, setIsConsulting] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatInstance = useRef<any>(null);
+
+  // New Audit Intelligence State
+  const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
+  const [isPerformingAudit, setIsPerformingAudit] = useState(false);
+
   // QR Code State
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
 
-  // Neural Audit State (Basic)
+  // Neural Audit State (Quick Insight)
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiScore, setAiScore] = useState<number | null>(null);
 
-  // Forensic Deep Dive State (Advanced Thinking)
-  const [isDeepAnalyzing, setIsDeepAnalyzing] = useState(false);
-  const [deepReport, setDeepReport] = useState<string | null>(null);
-
+  // Edit States
   const [editAmount, setEditAmount] = useState('');
   const [editTag, setEditTag] = useState('');
+  const [editTags, setEditTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+  const [allExistingTags, setAllExistingTags] = useState<string[]>([]);
+  const [focusedSuggestionIndex, setFocusedSuggestionIndex] = useState(-1);
+  const suggestionRef = useRef<HTMLDivElement>(null);
+  
   const [isUpdating, setIsUpdating] = useState(false);
   const [isGeneratingSeal, setIsGeneratingSeal] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{ valid: boolean; message: string } | null>(null);
   const [correctionMsg, setCorrectionMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
+  // Log Expansion State
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
+
   const isSuperAdmin = currentUserRole === 'super_admin';
+
+  const toggleLog = (logId: string) => {
+    setExpandedLogs(prev => {
+      const next = new Set(prev);
+      if (next.has(logId)) next.delete(logId);
+      else next.add(logId);
+      return next;
+    });
+  };
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if (chatMessages.length > 0) scrollToBottom();
+  }, [chatMessages]);
 
   const generateQrCode = useCallback(async (text: string) => {
     try {
@@ -115,10 +195,7 @@ export default function TransactionDetail() {
       const url = await QRCode.toDataURL(text, {
         width: 400,
         margin: 2,
-        color: {
-          dark: '#4f46e5',
-          light: '#ffffff',
-        },
+        color: { dark: '#4f46e5', light: '#ffffff' },
       });
       setQrCodeUrl(url);
     } catch (err) {
@@ -165,10 +242,10 @@ export default function TransactionDetail() {
     return Array.from(new Uint8Array(signature), b => b.toString(16).padStart(2, '0')).join('');
   };
 
-  const handleDeepForensicAnalysis = async () => {
+  const performDetailedAudit = async () => {
     if (!transaction) return;
-    setIsDeepAnalyzing(true);
-    setDeepReport(null);
+    setIsPerformingAudit(true);
+    setAuditReport(null);
     try {
       const { data: history } = await supabase
         .from('transactions')
@@ -179,40 +256,115 @@ export default function TransactionDetail() {
 
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const prompt = `
-        PERFORM DEEP FORENSIC ANALYSIS (THINKING MODE)
-        
-        TRANSACTION TO AUDIT:
-        - Source: ${transaction.source}
-        - Amount: ₹${transaction.amount}
-        - Mode: ${transaction.payment_mode}
-        - Reference: ${transaction.reference_id || 'LOCAL'}
-        - Date: ${new Date(transaction.created_at).toLocaleString()}
-        
-        HISTORICAL CONTEXT (SIMILAR ENTITIES):
-        ${JSON.stringify(history)}
+        Perform a high-fidelity forensic audit on this transaction.
+        Context: Source "${transaction.source}", Amount ₹${transaction.amount}, Mode ${transaction.payment_mode}, Reference "${transaction.reference_id || 'LOCAL'}".
+        Historical Context: ${JSON.stringify(history)}
 
-        GOAL: Provide a structured forensic report identifying anomalies, source reliability, and pattern consistency.
-        FORMAT:
-        1. ANOMALY DETECTION: (Highlight outliers)
-        2. VELOCITY CHECK: (Frequency analysis)
-        3. SOURCE RELIABILITY: (Is this entity known?)
-        4. VERDICT: (Clear forensic opinion)
+        Return a structured JSON object representing the audit result.
       `;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-pro-preview',
         contents: prompt,
         config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              riskScore: { type: Type.NUMBER, description: "0-100 score of risk" },
+              riskLevel: { type: Type.STRING, enum: ["LOW", "MEDIUM", "HIGH"] },
+              vectors: {
+                type: Type.OBJECT,
+                properties: {
+                  velocity: { type: Type.STRING },
+                  magnitude: { type: Type.STRING },
+                  authenticity: { type: Type.STRING }
+                },
+                required: ["velocity", "magnitude", "authenticity"]
+              },
+              patterns: { type: Type.ARRAY, items: { type: Type.STRING } },
+              anomalies: { type: Type.ARRAY, items: { type: Type.STRING } },
+              verdict: { type: Type.STRING }
+            },
+            required: ["riskScore", "riskLevel", "vectors", "patterns", "anomalies", "verdict"]
+          }
+        }
+      });
+
+      const result = JSON.parse(response.text.trim());
+      setAuditReport(result);
+    } catch (err: any) {
+      console.error('Audit Intelligence Error:', err);
+    } finally {
+      setIsPerformingAudit(false);
+    }
+  };
+
+  const initForensicConsultation = async () => {
+    if (!transaction || isConsulting) return;
+    setIsConsulting(true);
+    setIsAiThinking(true);
+    
+    try {
+      const { data: history } = await supabase
+        .from('transactions')
+        .select('amount, created_at, payment_mode, reference_id')
+        .eq('source', transaction.source)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const systemPrompt = `
+        You are the "FinTrack Forensic Consultant". 
+        You are auditing a specific transaction:
+        - ID: ${transaction.id}
+        - Source: ${transaction.source}
+        - Amount: ₹${transaction.amount}
+        - Mode: ${transaction.payment_mode}
+        - Reference: ${transaction.reference_id || 'LOCAL'}
+        
+        Historical Context for this source: ${JSON.stringify(history)}
+        
+        GOAL: Discuss this entry with the auditor. Help identify risks, patterns, or verify legitimacy.
+        Be professional, analytical, and highly precise.
+      `;
+
+      chatInstance.current = ai.chats.create({
+        model: 'gemini-3-pro-preview',
+        config: {
+          systemInstruction: systemPrompt,
           thinkingConfig: { thinkingBudget: 32768 }
         }
       });
 
-      setDeepReport(response.text);
-    } catch (err: any) {
-      console.error('Deep Analysis Failure:', err);
-      setDeepReport("## Analysis Failure\nFailed to engage neural core for deep forensic reasoning.");
+      const response = await chatInstance.current.sendMessage({
+        message: "Perform an initial forensic intake of this transaction and provide a 2-sentence summary of your immediate observation."
+      });
+
+      setChatMessages([{ role: 'assistant', content: response.text || "Neural connection established. Analysis core ready." }]);
+    } catch (err) {
+      setChatMessages([{ role: 'assistant', content: "Forensic bridge failed to initialize. Error in neural telemetry." }]);
     } finally {
-      setIsDeepAnalyzing(false);
+      setIsAiThinking(false);
+    }
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || isAiThinking || !chatInstance.current) return;
+
+    const userText = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: userText }]);
+    setIsAiThinking(true);
+
+    try {
+      const response = await chatInstance.current.sendMessage({ message: userText });
+      setChatMessages(prev => [...prev, { role: 'assistant', content: response.text || "Signal drift detected. Re-evaluating." }]);
+    } catch (err) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: "Failed to process query. Neural core interrupted." }]);
+    } finally {
+      setIsAiThinking(false);
     }
   };
 
@@ -236,8 +388,6 @@ export default function TransactionDetail() {
         Analyze this transaction for forensic verification:
         Current: Source "${currentTx.source}", Amount ₹${currentTx.amount}, Mode ${currentTx.payment_mode}, Ref "${currentTx.reference_id || 'N/A'}".
         Context: ${historyContext}
-        
-        Identify if the current amount is an outlier (velocity anomaly) or follows standard patterns.
         Return: Insight: [max 35 words forensic observation] | Score: [0-100 where 100 is highly anomalous]
       `;
 
@@ -254,9 +404,25 @@ export default function TransactionDetail() {
       setAiScore(scoreMatch ? parseInt(scoreMatch[1]) : 0);
     } catch (err) {
       console.error('Neural Audit Error:', err);
-      setAiInsight("Telemetry drift detected but forensic link is offline. Statistics within nominal range.");
+      setAiInsight("Telemetry drift detected but forensic link is offline.");
     } finally {
       setIsAnalyzing(false);
+    }
+  }, []);
+
+  const fetchExistingTags = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.from('transactions').select('tags');
+      if (error) throw error;
+      const allTags = new Set<string>();
+      data.forEach(item => {
+        if (item.tags && Array.isArray(item.tags)) {
+          item.tags.forEach((t: string) => allTags.add(t));
+        }
+      });
+      setAllExistingTags(Array.from(allTags));
+    } catch (err) {
+      console.error('Failed to fetch existing tags:', err);
     }
   }, []);
 
@@ -267,7 +433,7 @@ export default function TransactionDetail() {
       const { data: txData, error: txError } = await supabase
         .from('transactions')
         .select(`
-          *,
+          id, amount, payment_mode, reference_id, source, created_at, updated_at, created_by, audit_tag, tags, secure_id, signature,
           creator:users!transactions_created_by_fkey (
             email,
             role
@@ -281,12 +447,14 @@ export default function TransactionDetail() {
       setTransaction(txData);
       setEditAmount(txData.amount?.toString() || '');
       setEditTag(txData.audit_tag || '');
+      setEditTags(txData.tags || []);
 
       if (txData.secure_id) {
         generateQrCode(txData.secure_id);
       }
 
       generateNeuralAudit(txData);
+      fetchExistingTags();
 
       const { data: logData, error: logError } = await supabase
         .from('activity_logs')
@@ -300,11 +468,11 @@ export default function TransactionDetail() {
       }
     } catch (err: any) {
       console.error('Audit Fetch Error:', err);
-      setError(err.message || 'Vault access failure: Record unreachable.');
+      setError(err.message || 'Vault access failure.');
     } finally {
       setLoading(false);
     }
-  }, [id, generateNeuralAudit, generateQrCode]);
+  }, [id, generateNeuralAudit, generateQrCode, fetchExistingTags]);
 
   useEffect(() => {
     fetchTransactionAndLogs();
@@ -352,7 +520,7 @@ export default function TransactionDetail() {
       }]);
       await fetchTransactionAndLogs();
     } catch (err: any) {
-      setError("Seal initialization failed: " + err.message);
+      setError("Seal initialization failed.");
     } finally {
       setIsGeneratingSeal(false);
     }
@@ -369,18 +537,79 @@ export default function TransactionDetail() {
       if (transaction.signature === expectedSignature) {
         setVerificationResult({ 
           valid: true, 
-          message: 'Cryptographic signature match. Transaction integrity verified against original operator node.' 
+          message: 'Cryptographic signature match. Transaction integrity verified against master node key.' 
         });
+        await supabase.from('activity_logs').insert([{
+          entity_type: 'transactions',
+          entity_id: transaction.id,
+          action: 'INTEGRITY_VERIFIED',
+          performed_by: user!.id,
+          details: { status: 'MATCH', secure_id: transaction.secure_id }
+        }]);
       } else {
         setVerificationResult({ 
           valid: false, 
-          message: 'Signature mismatch detected. Potential tampering or key drift in transit.' 
+          message: 'Signature mismatch detected. The ledger signal has been modified or signed with an unauthorized key.' 
         });
+        await supabase.from('activity_logs').insert([{
+          entity_type: 'transactions',
+          entity_id: transaction.id,
+          action: 'INTEGRITY_FAILURE',
+          performed_by: user!.id,
+          details: { status: 'MISMATCH', actual: transaction.signature.slice(0, 10) + '...' }
+        }]);
       }
     } catch (err) {
-      setVerificationResult({ valid: false, message: 'Verification engine encountered a runtime error.' });
+      setVerificationResult({ valid: false, message: 'Cryptographic verification engine error.' });
     } finally {
       setIsVerifying(false);
+    }
+  };
+
+  const handleAddTag = (tag: string) => {
+    const trimmed = tag.trim().toUpperCase();
+    if (trimmed && !editTags.includes(trimmed)) {
+      setEditTags(prev => [...prev, trimmed]);
+      setTagInput('');
+      setTagSuggestions([]);
+      setFocusedSuggestionIndex(-1);
+    }
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setEditTags(prev => prev.filter(t => t !== tag));
+  };
+
+  const handleTagInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setTagInput(value);
+    if (value.trim()) {
+      const filtered = allExistingTags.filter(t => 
+        t.toLowerCase().includes(value.toLowerCase()) && !editTags.includes(t)
+      );
+      setTagSuggestions(filtered);
+    } else {
+      setTagSuggestions(allExistingTags.filter(t => !editTags.includes(t)).slice(0, 5));
+    }
+    setFocusedSuggestionIndex(-1);
+  };
+
+  const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setFocusedSuggestionIndex(prev => Math.min(prev + 1, tagSuggestions.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setFocusedSuggestionIndex(prev => Math.max(prev - 1, -1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (focusedSuggestionIndex >= 0) {
+        handleAddTag(tagSuggestions[focusedSuggestionIndex]);
+      } else if (tagInput.trim()) {
+        handleAddTag(tagInput);
+      }
+    } else if (e.key === 'Escape') {
+      setTagSuggestions([]);
     }
   };
 
@@ -388,20 +617,33 @@ export default function TransactionDetail() {
     if (!id || !transaction || !user) return;
     setCorrectionMsg(null);
     const newAmount = parseFloat(editAmount);
+    
+    // Forensic validation for positive numeric values
     if (isNaN(newAmount) || newAmount <= 0) {
-      setCorrectionMsg({ type: 'error', text: 'Invalid signal: Settled value must be a positive number.' });
+      setCorrectionMsg({ type: 'error', text: 'Invalid value entry. Amount must be positive.' });
       return;
     }
+    
     setIsUpdating(true);
     try {
       const oldAmount = transaction.amount;
       const oldTag = transaction.audit_tag;
+      const oldTags = transaction.tags || [];
       const sanitizedTag = editTag.trim() || null;
+      
       const { error: updateError } = await supabase
         .from('transactions')
-        .update({ amount: newAmount, audit_tag: sanitizedTag, updated_at: new Date().toISOString() })
+        .update({ 
+          amount: newAmount, 
+          audit_tag: sanitizedTag, 
+          tags: editTags,
+          updated_at: new Date().toISOString() 
+        })
         .eq('id', id);
+        
       if (updateError) throw updateError;
+      
+      // Mandatory forensic logging in activity_logs
       await supabase.from('activity_logs').insert([{
         entity_type: 'transactions',
         entity_id: id,
@@ -410,14 +652,16 @@ export default function TransactionDetail() {
         details: {
           changes: {
             amount: { from: oldAmount, to: newAmount },
-            audit_tag: { from: oldTag, to: sanitizedTag }
+            audit_tag: { from: oldTag, to: sanitizedTag },
+            tags: { from: oldTags, to: editTags }
           }
         }
       }]);
-      setCorrectionMsg({ type: 'success', text: 'Ledger recalibrated successfully.' });
+      
+      setCorrectionMsg({ type: 'success', text: 'Ledger recalibrated. All forensic drifts recorded.' });
       await fetchTransactionAndLogs();
     } catch (err: any) {
-      setCorrectionMsg({ type: 'error', text: err.message || 'Transmission failure.' });
+      setCorrectionMsg({ type: 'error', text: 'Transmission failure.' });
     } finally {
       setIsUpdating(false);
     }
@@ -430,10 +674,10 @@ export default function TransactionDetail() {
   );
 
   if (error || !transaction) return (
-    <div className="flex h-[80vh] flex-col items-center justify-center p-8">
+    <div className="flex h-[80vh] flex-col items-center justify-center p-8 text-center">
       <AlertCircle className="h-12 w-12 text-rose-500 mb-4" />
-      <p className="text-sm font-bold text-slate-900">{error || 'Integrity Failure'}</p>
-      <button onClick={() => navigate(-1)} className="mt-6 text-[10px] font-black uppercase tracking-widest text-indigo-600">Return to Console</button>
+      <p className="text-sm font-bold text-slate-900">{error || 'Vault Access Error'}</p>
+      <button onClick={() => navigate(-1)} className="mt-6 text-[10px] font-black uppercase tracking-widest text-indigo-600 underline">Return to Vault</button>
     </div>
   );
 
@@ -444,6 +688,49 @@ export default function TransactionDetail() {
     return { color: 'text-emerald-500', bg: 'bg-emerald-50', border: 'border-emerald-100', icon: ShieldCheck, label: 'Verified Nominal' };
   };
   const risk = getRiskUI(aiScore || 0);
+
+  const getLogIndicator = (action: string) => {
+    switch(action) {
+      case 'UPDATE': return { icon: RefreshCw, color: 'text-amber-600', bg: 'bg-amber-100' };
+      case 'SECURE_ID_GENERATED': return { icon: Fingerprint, color: 'text-indigo-600', bg: 'bg-indigo-100' };
+      case 'INITIAL_RECORD': return { icon: Zap, color: 'text-emerald-600', bg: 'bg-emerald-100' };
+      case 'INTEGRITY_VERIFIED': return { icon: ShieldCheck, color: 'text-emerald-600', bg: 'bg-emerald-100' };
+      case 'INTEGRITY_FAILURE': return { icon: ShieldAlert, color: 'text-rose-600', bg: 'bg-rose-100' };
+      default: return { icon: Activity, color: 'text-slate-600', bg: 'bg-slate-100' };
+    }
+  };
+
+  const renderChanges = (changes: any) => {
+    if (!changes) return null;
+    return Object.entries(changes).map(([key, val]: [string, any]) => {
+      const from = val.from === null || val.from === undefined ? 'NULL' : Array.isArray(val.from) ? `[${val.from.join(', ')}]` : val.from;
+      const to = val.to === null || val.to === undefined ? 'NULL' : Array.isArray(val.to) ? `[${val.to.join(', ')}]` : val.to;
+      
+      const isAmount = key === 'amount';
+      
+      return (
+        <div key={key} className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0 border-b border-white/5 last:border-0">
+           <div className="flex items-center justify-between">
+              <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">{key} Observation</span>
+              {isAmount && typeof from === 'number' && typeof to === 'number' && (
+                <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full ${to > from ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                   {to > from ? '+' : ''}{((to - from) / from * 100).toFixed(1)}% Drift
+                </span>
+              )}
+           </div>
+           <div className="flex items-center gap-3">
+              <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-800/50 px-3 py-1 rounded-lg truncate max-w-[140px] border border-white/5 shadow-inner">
+                {isAmount ? `₹${Number(from).toLocaleString()}` : String(from)}
+              </span>
+              <ArrowRight className="h-3 w-3 text-indigo-500 shrink-0" />
+              <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/50 px-3 py-1 rounded-lg truncate max-w-[140px] border border-emerald-500/10 shadow-inner">
+                {isAmount ? `₹${Number(to).toLocaleString()}` : String(to)}
+              </span>
+           </div>
+        </div>
+      );
+    });
+  };
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-4xl mx-auto py-10 px-4 md:px-0">
@@ -462,7 +749,7 @@ export default function TransactionDetail() {
         </div>
       </div>
 
-      {/* Neural Audit HUD */}
+      {/* Neural Quick Insight HUD */}
       <div className="mb-12 rounded-[3.5rem] bg-indigo-950 p-10 text-white shadow-3xl relative overflow-hidden group">
         <div className="absolute top-0 right-0 p-12 opacity-5 rotate-12 transition-transform group-hover:rotate-0 duration-700">
            <BrainCircuit className="h-40 w-40" />
@@ -471,13 +758,9 @@ export default function TransactionDetail() {
            <div className="flex items-center justify-between mb-8">
               <div className="flex items-center gap-3">
                  <Sparkles className={`h-5 w-5 ${isAnalyzing ? 'animate-spin text-indigo-400' : 'text-indigo-400'}`} />
-                 <span className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400">Neural Record Audit</span>
+                 <span className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400">Neural Quick Scan</span>
               </div>
-              <button 
-                onClick={() => generateNeuralAudit(transaction)} 
-                disabled={isAnalyzing}
-                className="p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
-              >
+              <button onClick={() => generateNeuralAudit(transaction)} disabled={isAnalyzing} className="p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors">
                  <RotateCcw className={`h-4 w-4 ${isAnalyzing ? 'animate-spin' : ''}`} />
               </button>
            </div>
@@ -492,7 +775,7 @@ export default function TransactionDetail() {
                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row gap-8 items-start">
                   <div className="flex-1">
                     <p className="text-xl font-black italic leading-snug tracking-tight">
-                      "{aiInsight || 'Intelligence core awaiting signal handshake.'}"
+                      "{aiInsight || 'Intelligence core awaiting signal.'}"
                     </p>
                   </div>
                   {aiScore !== null && (
@@ -508,91 +791,13 @@ export default function TransactionDetail() {
         </div>
       </div>
 
-      {/* Forensic Lab Terminal */}
-      <div className="mb-12 rounded-[4rem] bg-slate-900 border border-slate-800 p-12 text-slate-100 shadow-premium relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-indigo-500 to-transparent opacity-20" />
-        <div className="flex items-center justify-between mb-10">
-           <div className="flex items-center gap-4">
-              <div className="h-10 w-10 rounded-2xl bg-indigo-600/20 border border-indigo-500/20 flex items-center justify-center">
-                 <Terminal className="h-5 w-5 text-indigo-400" />
-              </div>
-              <div>
-                 <h3 className="text-xl font-black italic tracking-tighter uppercase leading-none text-white">Forensic Lab Terminal</h3>
-                 <p className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-500 mt-2">Neural Deep-Dive Protocol v3.1</p>
-              </div>
-           </div>
-           {!isDeepAnalyzing && !deepReport && (
-             <button 
-               onClick={handleDeepForensicAnalysis}
-               className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl transition-all active:scale-95 flex items-center gap-3"
-             >
-                <Layers className="h-4 w-4" />
-                Engage Deep Analysis
-             </button>
-           )}
-        </div>
-
-        <AnimatePresence mode="wait">
-           {isDeepAnalyzing ? (
-             <motion.div 
-               key="thinking"
-               initial={{ opacity: 0 }} 
-               animate={{ opacity: 1 }} 
-               exit={{ opacity: 0 }}
-               className="py-20 flex flex-col items-center justify-center bg-slate-950/40 rounded-[3rem] border border-slate-800"
-             >
-                <div className="flex gap-2 items-center h-16 mb-8">
-                  {[...Array(8)].map((_, i) => (
-                    <motion.div 
-                      key={i} 
-                      animate={{ height: [8, 48, 8], opacity: [0.3, 1, 0.3] }} 
-                      transition={{ repeat: Infinity, duration: 0.8, delay: i * 0.1 }} 
-                      className="w-2.5 bg-indigo-500 rounded-full" 
-                    />
-                  ))}
-                </div>
-                <p className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-400 animate-pulse">Engaging Intelligence Core...</p>
-                <div className="mt-4 flex items-center gap-4 text-slate-600 text-[8px] font-black uppercase tracking-widest">
-                   <Shield className="h-3 w-3" /> Encrypted Sandbox Established
-                </div>
-             </motion.div>
-           ) : deepReport ? (
-             <motion.div 
-               key="report"
-               initial={{ opacity: 0, y: 20 }} 
-               animate={{ opacity: 1, y: 0 }}
-               className="space-y-8"
-             >
-                <div className="bg-slate-950/60 p-10 rounded-[3rem] border border-slate-800 relative group">
-                   <div className="absolute top-6 right-8 opacity-10">
-                      <TrendingUp className="h-12 w-12 text-indigo-400" />
-                   </div>
-                   <div className="prose prose-invert prose-sm max-w-none text-slate-300 font-medium leading-relaxed">
-                      {deepReport.split('\n').map((line, i) => (
-                        <p key={i} className={line.startsWith('#') ? 'text-indigo-400 font-black tracking-widest uppercase text-xs mt-6 first:mt-0' : ''}>
-                          {line.replace(/^#+\s*/, '')}
-                        </p>
-                      ))}
-                   </div>
-                </div>
-                <button 
-                  onClick={() => setDeepReport(null)}
-                  className="text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-indigo-400 transition-colors flex items-center gap-2"
-                >
-                   <RotateCcw className="h-3 w-3" /> Purge Report Session
-                </button>
-             </motion.div>
-           ) : null}
-        </AnimatePresence>
-      </div>
-
       {/* Main Ledger Card */}
       <div className="relative rounded-[4rem] bg-white shadow-3xl overflow-hidden border border-slate-100 mb-12">
           <div className="bg-slate-950 p-12 md:p-16 text-white relative">
               <div className="relative z-10">
                   <div className="flex items-center gap-4 mb-10">
-                       <div className="h-10 w-10 rounded-2xl bg-indigo-500 flex items-center justify-center shadow-2xl">
-                          <Zap className="h-5 w-5 text-white" />
+                       <div className="h-10 w-10 rounded-2xl bg-indigo-50 flex items-center justify-center shadow-2xl">
+                          <Zap className="h-5 w-5 text-indigo-600" />
                        </div>
                        <span className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-600">Secure Asset Settlement Archive</span>
                   </div>
@@ -627,10 +832,29 @@ export default function TransactionDetail() {
                            <History className="h-3 w-3" /> Modified
                         </span>
                       )}
-                      <span className={`flex items-center gap-2 rounded-full px-8 py-3 text-[10px] font-black uppercase tracking-[0.3em] ring-1 transition-colors ${transaction.audit_tag ? 'bg-indigo-600 text-white ring-indigo-500 shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-600 ring-slate-200'}`}>
-                        <Bookmark className={`h-3 w-3 ${transaction.audit_tag ? 'text-indigo-200' : 'text-slate-400'}`} /> 
-                        {transaction.audit_tag || 'UNTAGGED'}
-                      </span>
+                      
+                      {/* Integrated Tags Display */}
+                      <div className="flex flex-wrap gap-2 justify-center mt-6">
+                        {transaction.audit_tag && (
+                          <span className="flex items-center gap-2 rounded-full bg-indigo-600 text-white px-8 py-3 text-[10px] font-black uppercase tracking-[0.3em] ring-1 ring-indigo-500 shadow-lg shadow-indigo-100">
+                            <Bookmark className="h-3 w-3 text-indigo-200" /> 
+                            {transaction.audit_tag}
+                          </span>
+                        )}
+                        <AnimatePresence>
+                          {transaction.tags && transaction.tags.map(t => (
+                            <motion.span 
+                              key={t}
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="flex items-center gap-2 rounded-full bg-slate-100 text-slate-600 px-8 py-3 text-[10px] font-black uppercase tracking-[0.3em] ring-1 ring-slate-200"
+                            >
+                              <Tag className="h-3 w-3 text-slate-400" />
+                              {t}
+                            </motion.span>
+                          ))}
+                        </AnimatePresence>
+                      </div>
                   </div>
               </div>
 
@@ -651,197 +875,306 @@ export default function TransactionDetail() {
                   </div>
               </div>
 
-              {/* Cryptographic Audit Seal HUD */}
-              <div className="mb-16 p-8 rounded-[3rem] bg-indigo-600 text-white relative overflow-hidden shadow-premium">
-                 <div className="absolute right-0 top-0 p-8 opacity-10 rotate-12">
-                    <LockKeyhole className="h-32 w-32" />
-                 </div>
-                 <div className="relative z-10">
-                    <div className="flex items-center justify-between mb-6">
-                       <div className="flex items-center gap-3">
-                          <QrCode className="h-4 w-4 text-indigo-300" />
-                          <span className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-200">Cryptographic Audit Seal</span>
-                       </div>
-                       {transaction.secure_id && (
-                         <div className="flex items-center gap-2 bg-white/10 px-4 py-1.5 rounded-full border border-white/10">
-                            <ShieldCheck className="h-3 w-3 text-emerald-400" />
-                            <span className="text-[8px] font-black uppercase tracking-widest text-emerald-400">Locked & Sealed</span>
-                         </div>
-                       )}
-                    </div>
-
-                    <div className="space-y-6">
-                       {transaction.secure_id ? (
-                         <div className="space-y-8">
-                            <div className="flex flex-col md:flex-row gap-8 items-start">
-                               <div className="flex-1 space-y-6 w-full">
-                                  <div 
-                                    onClick={() => handleCopy(transaction.secure_id!, true)}
-                                    className="font-mono text-xl md:text-2xl font-black tracking-[0.15em] break-all bg-black/20 p-6 rounded-2xl cursor-pointer hover:bg-black/30 transition-all border border-white/5 flex items-center justify-between gap-4"
-                                  >
-                                      <span className="truncate">{transaction.secure_id}</span>
-                                      {copiedSecure ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4 text-white/40" />}
-                                  </div>
-                                  
-                                  <div className="space-y-4">
-                                     <div className="flex items-center gap-2">
-                                        <Key className="h-3 w-3 text-indigo-300" />
-                                        <span className="text-[8px] font-black uppercase tracking-widest text-indigo-200">Digital Authentication Signature</span>
-                                     </div>
-                                     <div className="font-mono text-[9px] break-all bg-black/40 p-5 rounded-xl border border-white/5 text-indigo-300 leading-relaxed shadow-inner">
-                                        {transaction.signature || 'NO_SIGNATURE_DATA'}
-                                     </div>
-                                  </div>
-                               </div>
-
-                               {/* QR Code Section */}
-                               <div className="shrink-0 w-full md:w-48 space-y-4">
-                                  <div className="aspect-square bg-white rounded-3xl p-4 flex items-center justify-center shadow-2xl relative overflow-hidden group/qr">
-                                     {isGeneratingQr ? (
-                                       <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-                                     ) : qrCodeUrl ? (
-                                       <img src={qrCodeUrl} alt="Secure ID QR" className="w-full h-full object-contain" />
-                                     ) : (
-                                       <button onClick={() => generateQrCode(transaction.secure_id!)} className="text-[8px] font-black uppercase tracking-widest text-slate-400 text-center px-4">Initialize Visual Token</button>
-                                     )}
-                                  </div>
-                                  {qrCodeUrl && (
-                                    <button 
-                                      onClick={downloadQrCode}
-                                      className="w-full flex items-center justify-center gap-2 py-3 bg-black/20 hover:bg-black/40 rounded-xl text-[8px] font-black uppercase tracking-[0.2em] transition-all border border-white/5"
-                                    >
-                                       <FileDown className="h-3 w-3" /> Download Token
-                                    </button>
-                                  )}
-                               </div>
-                            </div>
-                               
-                            {isSuperAdmin && (
-                               <div className="pt-4 flex flex-col gap-4">
-                                  <button 
-                                    onClick={handleVerifySeal}
-                                    disabled={isVerifying}
-                                    className="flex items-center justify-center gap-3 bg-white text-indigo-600 px-6 py-4 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-indigo-50 transition-all disabled:opacity-50"
-                                  >
-                                     {isVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Verified className="h-4 w-4" />}
-                                     Verify Signature Authenticity
-                                  </button>
-                                  
-                                  <AnimatePresence>
-                                     {verificationResult && (
-                                       <motion.div 
-                                        initial={{ opacity: 0, scale: 0.95 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        className={`p-5 rounded-xl flex items-start gap-4 border ${verificationResult.valid ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}
-                                       >
-                                          {verificationResult.valid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <ShieldAlert className="h-5 w-5 shrink-0" />}
-                                          <p className="text-[10px] font-bold uppercase tracking-tight leading-relaxed">{verificationResult.message}</p>
-                                       </motion.div>
-                                     )}
-                                  </AnimatePresence>
-                               </div>
-                            )}
-                         </div>
-                       ) : isSuperAdmin ? (
-                         <button 
-                          onClick={handleInitializeSeal}
-                          disabled={isGeneratingSeal}
-                          className="w-full bg-white text-indigo-600 px-8 py-5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-indigo-50 transition-all flex items-center justify-center gap-3"
-                         >
-                            {isGeneratingSeal ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fingerprint className="h-4 w-4" />}
-                            Generate Cryptographic Audit Seal
-                         </button>
-                       ) : (
-                         <div className="w-full py-4 px-8 border border-white/10 rounded-2xl flex items-center gap-4 text-indigo-200">
-                            <Info className="h-4 w-4" />
-                            <p className="text-[10px] font-bold uppercase tracking-widest">Seal Awaiting Master Node Authorization</p>
-                         </div>
-                       )}
-                    </div>
-                 </div>
-              </div>
-
-              {/* Operator Node */}
-              <div className="space-y-8 border-t border-slate-50 pt-16">
+              {/* Operational Authority Node */}
+              <div className="space-y-8 border-t border-slate-50 pt-16 group">
                   <div className="flex items-center gap-3">
-                    <div className="h-6 w-6 rounded-lg bg-indigo-100 flex items-center justify-center">
-                      <UserCheck className="h-3 w-3 text-indigo-600" />
+                    <div className="h-8 w-8 rounded-xl bg-indigo-100 flex items-center justify-center group-hover:bg-indigo-600 transition-colors">
+                      <UserRoundCheck className="h-4 w-4 text-indigo-600 group-hover:text-white" />
                     </div>
                     <span className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Operational Authority Node</span>
                   </div>
-                  <div className="flex items-center gap-10 p-10 rounded-[3rem] bg-slate-50 border border-slate-100">
-                    <div className="h-20 w-20 rounded-[2rem] bg-white flex items-center justify-center shadow-lg shrink-0">
-                       <User className="h-8 w-8 text-slate-300" />
+                  
+                  <div className="flex flex-col md:flex-row items-center gap-10 p-10 rounded-[3.5rem] bg-slate-50 border border-slate-100 shadow-sm relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-10 opacity-[0.03] rotate-12"><ShieldHalf className="h-32 w-32" /></div>
+                    <div className="h-24 w-24 rounded-[2.5rem] bg-white flex items-center justify-center shadow-xl shrink-0 border border-slate-50">
+                       <User className="h-10 w-10 text-slate-300" />
                     </div>
-                    <div>
-                       <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Operator Identity</span>
-                       <p className="text-xl font-black text-slate-900">{transaction.creator?.email || 'LEGACY_USER_' + transaction.created_by.slice(0, 6)}</p>
-                       <span className="mt-2 inline-block px-3 py-1 rounded-lg bg-indigo-600 text-white text-[8px] font-black uppercase tracking-widest">
-                         {transaction.creator?.role?.replace('_', ' ') || 'User'}
-                       </span>
+                    <div className="flex-1 text-center md:text-left z-10">
+                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Authenticated Operator</p>
+                       <p className="text-2xl font-black text-slate-950 tracking-tight leading-none mb-4">
+                          {transaction.creator?.email || `LEGACY_REF_${transaction.created_by.slice(0, 8)}`}
+                       </p>
+                       <div className="flex flex-wrap justify-center md:justify-start gap-3">
+                          <span className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-[0.2em]">
+                            {transaction.creator?.role?.replace('_', ' ') || 'Registered Node'}
+                          </span>
+                       </div>
                     </div>
                   </div>
               </div>
           </div>
       </div>
 
-      {/* Super Admin Terminal */}
+      {/* Audit History & Modification Trail */}
+      <div className="bg-white rounded-[4rem] p-12 md:p-16 shadow-3xl border border-slate-100 mb-12 overflow-hidden relative">
+          <div className="flex items-center justify-between mb-16 relative z-10">
+            <div className="flex items-center gap-5">
+              <div className="h-12 w-12 rounded-[1.5rem] bg-slate-950 flex items-center justify-center shadow-2xl">
+                <ListTodo className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h3 className="text-2xl font-black italic tracking-tighter uppercase text-slate-900 leading-none">Audit History & Trail</h3>
+                <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400 mt-2">Historical Modification Consensus</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 bg-slate-50 px-5 py-3 rounded-2xl border border-slate-100 shadow-sm">
+               <span className="text-lg font-black text-indigo-600 tabular-nums">{logs.length}</span>
+               <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Events Recorded</span>
+            </div>
+          </div>
+          
+          <div className="space-y-12 relative before:absolute before:left-[23px] before:top-4 before:bottom-4 before:w-[2px] before:bg-slate-100">
+            {logs.length === 0 ? (
+              <div className="py-12 pl-16 flex flex-col items-start opacity-30">
+                <Inbox className="h-10 w-10 text-slate-300 mb-4" />
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 italic">No historical drifts detected for this entity node.</p>
+              </div>
+            ) : (
+              logs.map((log, idx) => {
+                const indicator = getLogIndicator(log.action);
+                const isExpanded = expandedLogs.has(log.id);
+                const hasChanges = log.details?.changes && Object.keys(log.details.changes).length > 0;
+
+                return (
+                  <motion.div 
+                    key={log.id} 
+                    initial={{ opacity: 0, x: -20 }} 
+                    animate={{ opacity: 1, x: 0 }} 
+                    transition={{ delay: idx * 0.05 }} 
+                    className="relative pl-16 group/log"
+                  >
+                    <div className={`absolute left-0 top-1.5 h-12 w-12 rounded-2xl ${indicator.bg} flex items-center justify-center z-10 shadow-sm border border-white ring-4 ring-white group-hover/log:scale-110 transition-transform duration-300`}>
+                       <indicator.icon className={`h-5 w-5 ${indicator.color}`} />
+                    </div>
+
+                    <div className={`flex flex-col gap-6 p-10 rounded-[2.5rem] bg-slate-50/50 hover:bg-white hover:shadow-xl hover:shadow-slate-200/40 border border-transparent hover:border-slate-100 transition-all duration-500`}>
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className={`text-[9px] font-black uppercase tracking-widest px-4 py-2 rounded-xl border shadow-sm ${
+                              log.action === 'UPDATE' ? 'bg-amber-50 text-amber-700 border-amber-100' : 
+                              log.action === 'SECURE_ID_GENERATED' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' :
+                              log.action === 'INTEGRITY_VERIFIED' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                              'bg-emerald-50 text-emerald-700 border-emerald-100'
+                            }`}>
+                              {log.action.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-[9px] font-black uppercase tracking-widest text-slate-300 flex items-center gap-2">
+                               <ShieldCheck className="h-3 w-3" /> Signal Authenticated
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-100 w-fit">
+                            <div className="h-6 w-6 rounded-lg bg-indigo-50 flex items-center justify-center">
+                               <User className="h-3.5 w-3.5 text-indigo-600" />
+                            </div>
+                            <p className="text-xs font-black text-slate-700 uppercase tracking-tight">
+                               {log.performer?.email || `LEGACY_NODE_${log.performed_by.slice(0, 8)}`}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-left md:text-right shrink-0 flex items-center gap-8">
+                           <div>
+                             <div className="flex items-center md:justify-end gap-3 text-slate-950 mb-1">
+                                <Clock className="h-4 w-4 text-indigo-500" />
+                                <span className="text-lg font-black tabular-nums tracking-tighter italic">
+                                   {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </span>
+                             </div>
+                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] block">
+                                {new Date(log.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'long', year: 'numeric' })}
+                             </span>
+                           </div>
+                           
+                           {hasChanges && (
+                             <button 
+                               onClick={() => toggleLog(log.id)}
+                               className={`p-4 rounded-2xl transition-all shadow-md active:scale-90 ${isExpanded ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border border-slate-100 hover:border-indigo-600 hover:text-indigo-600'}`}
+                             >
+                               {isExpanded ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                             </button>
+                           )}
+                        </div>
+                      </div>
+
+                      {/* Expandable Changes Section (Modification Details) */}
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div 
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden"
+                          >
+                             <div className="pt-8 border-t border-slate-200/60 mt-2">
+                                <div className="flex items-center gap-3 mb-6">
+                                   <Database className="h-4 w-4 text-indigo-500" />
+                                   <span className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500">Forensic Delta Capture</span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-950 p-8 rounded-[3rem] border border-slate-800 shadow-2xl">
+                                   {renderChanges(log.details.changes)}
+                                </div>
+                             </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </motion.div>
+                );
+              })
+            )}
+          </div>
+      </div>
+
+      {/* Super Admin Terminal (Master Recalibration & Amount Editing) */}
       {isSuperAdmin && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="rounded-[4rem] bg-slate-900 p-12 md:p-16 text-white shadow-3xl relative overflow-hidden mb-12">
-          <div className="absolute top-0 right-0 p-12 opacity-10">
-            <Settings className="h-32 w-32 animate-spin-slow" />
-          </div>
+          <div className="absolute top-0 right-0 p-12 opacity-10"><Settings className="h-32 w-32 animate-spin-slow" /></div>
           <div className="relative z-10">
             <div className="flex items-center gap-4 mb-10">
               <ShieldAlert className="h-8 w-8 text-amber-400" />
-              <h3 className="text-2xl font-black italic tracking-tighter uppercase">Master Recalibration Terminal</h3>
+              <h3 className="text-2xl font-black italic tracking-tighter uppercase">Master Recalibration</h3>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-              <div className="space-y-8">
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 ml-1">Settled Value Adjustment</label>
-                  <div className="relative">
-                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-2xl font-black text-indigo-500 italic">₹</span>
-                    <input 
-                      type="number"
-                      value={editAmount}
-                      onChange={(e) => setEditAmount(e.target.value)}
-                      className="h-20 w-full rounded-3xl bg-white/5 border border-white/10 pl-16 pr-8 text-2xl font-black text-white focus:ring-4 focus:ring-indigo-500/30 transition-all italic outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-8">
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 ml-1">Audit Metadata Tag</label>
+              <div className="space-y-3">
+                <label className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 ml-1">Amount Adjustment (New Value)</label>
+                <div className="relative">
+                  <span className="absolute left-6 top-1/2 -translate-y-1/2 text-2xl font-black text-indigo-500 italic">₹</span>
                   <input 
-                    type="text"
-                    value={editTag}
-                    onChange={(e) => setEditTag(e.target.value)}
-                    className="h-20 w-full rounded-3xl bg-white/5 border border-white/10 px-8 text-lg font-black text-white focus:ring-4 focus:ring-indigo-500/30 transition-all uppercase tracking-widest outline-none"
-                    placeholder="e.g. DUPLICATE_SIGNAL"
+                    type="number" 
+                    value={editAmount} 
+                    onChange={(e) => setEditAmount(e.target.value)} 
+                    className="h-20 w-full rounded-3xl bg-white/5 border border-white/10 pl-16 text-2xl font-black text-white italic outline-none focus:ring-2 focus:ring-indigo-600 transition-all shadow-inner" 
+                    placeholder="0.00"
                   />
                 </div>
-                <button 
-                  onClick={handleUpdateRecord} 
-                  disabled={isUpdating} 
-                  className="w-full h-20 rounded-3xl bg-indigo-600 text-white text-xs font-black uppercase tracking-[0.4em] flex items-center justify-center gap-4 hover:bg-indigo-500 transition-all shadow-xl"
-                >
-                  {isUpdating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
-                  Save Recalibration
-                </button>
+                <p className="text-[8px] font-bold text-slate-500 ml-1 uppercase tracking-widest">Validation: Must be a positive numeric value.</p>
+              </div>
+              <div className="space-y-3">
+                <label className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 ml-1">Audit Tag Override</label>
+                <input 
+                  type="text" 
+                  value={editTag} 
+                  onChange={(e) => setEditTag(e.target.value)} 
+                  className="h-20 w-full rounded-3xl bg-white/5 border border-white/10 px-8 text-lg font-black text-white uppercase outline-none focus:ring-2 focus:ring-indigo-600 transition-all shadow-inner" 
+                  placeholder="OPTIONAL_PRIMARY_TAG" 
+                />
               </div>
             </div>
 
+            {/* Optimized Tag Management Console */}
+            <div className="mt-12 space-y-6">
+              <div className="flex items-center justify-between ml-1">
+                <label className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500">Neural Forensic Multi-Tags</label>
+                {editTags.length > 0 && (
+                  <button onClick={() => setEditTags([])} className="text-[9px] font-black uppercase tracking-widest text-rose-500 hover:text-rose-400 transition-colors flex items-center gap-2">
+                    <Trash2 className="h-3 w-3" /> Clear Matrix Tags
+                  </button>
+                )}
+              </div>
+              
+              <div className="p-10 rounded-[3rem] bg-white/5 border border-white/10 shadow-inner">
+                <div className="flex flex-wrap gap-3 mb-10 min-h-[40px]">
+                  <AnimatePresence>
+                    {editTags.map(tag => (
+                      <motion.span 
+                        key={tag} 
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        className="inline-flex items-center gap-2 bg-indigo-600/30 text-indigo-300 px-6 py-3 rounded-2xl border border-indigo-500/20 text-[10px] font-black tracking-widest uppercase shadow-2xl"
+                      >
+                        {tag}
+                        <button onClick={() => handleRemoveTag(tag)} className="hover:text-rose-400 transition-colors p-1 hover:bg-rose-500/10 rounded-lg">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </motion.span>
+                    ))}
+                  </AnimatePresence>
+                  {editTags.length === 0 && (
+                    <div className="w-full flex flex-col items-center justify-center py-6 opacity-30">
+                       <Tag className="h-8 w-8 mb-3" />
+                       <span className="text-[10px] font-black uppercase tracking-widest italic text-center">Awaiting primary categorization tags.</span>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="relative group/input">
+                  <div className="absolute left-6 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-600 transition-colors group-focus-within/input:text-indigo-400">
+                    <Tag className="h-full w-full" />
+                  </div>
+                  <input 
+                    type="text"
+                    value={tagInput}
+                    onFocus={handleTagInputChange}
+                    onChange={handleTagInputChange}
+                    onKeyDown={handleTagInputKeyDown}
+                    placeholder="Search ledger or inject custom audit tag..."
+                    className="h-20 w-full rounded-3xl bg-black/40 border border-white/10 pl-16 pr-16 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-indigo-600/50 transition-all shadow-2xl placeholder:text-slate-700"
+                  />
+                  <button 
+                    onClick={() => handleAddTag(tagInput)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 h-12 w-12 bg-indigo-600 rounded-2xl flex items-center justify-center hover:bg-indigo-500 transition-all shadow-xl active:scale-95"
+                  >
+                    <Plus className="h-6 w-6" />
+                  </button>
+
+                  {/* Suggestion HUD */}
+                  <AnimatePresence>
+                    {tagSuggestions.length > 0 && (
+                      <motion.div 
+                        ref={suggestionRef}
+                        initial={{ opacity: 0, y: -15, scale: 0.98 }} 
+                        animate={{ opacity: 1, y: 0, scale: 1 }} 
+                        exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                        className="absolute left-0 right-0 top-full mt-4 z-[100] bg-slate-800 border border-white/10 rounded-[2.5rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.5)] overflow-hidden backdrop-blur-xl"
+                      >
+                        <div className="px-6 py-4 border-b border-white/5 bg-black/20">
+                           <span className="text-[8px] font-black uppercase tracking-[0.4em] text-slate-500">Suggested Signatures</span>
+                        </div>
+                        <div className="p-3 space-y-1 max-h-[300px] overflow-y-auto scrollbar-hide">
+                          {tagSuggestions.map((suggestion, idx) => (
+                            <button
+                              key={suggestion}
+                              onClick={() => handleAddTag(suggestion)}
+                              onMouseEnter={() => setFocusedSuggestionIndex(idx)}
+                              className={`w-full text-left px-6 py-4 rounded-2xl transition-all flex items-center justify-between group/suggest ${
+                                focusedSuggestionIndex === idx ? 'bg-indigo-600 text-white shadow-xl' : 'hover:bg-white/5 text-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-center gap-4">
+                                <TrendingUp className={`h-4 w-4 ${focusedSuggestionIndex === idx ? 'text-indigo-200' : 'text-slate-600'}`} />
+                                <span className="text-xs font-black uppercase tracking-widest">{suggestion}</span>
+                              </div>
+                              <ArrowRight className={`h-4 w-4 opacity-0 group-hover/suggest:opacity-100 transition-all ${focusedSuggestionIndex === idx ? 'text-white translate-x-0' : 'text-slate-500 -translate-x-2'}`} />
+                            </button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
+            </div>
+
+            <button 
+              onClick={handleUpdateRecord} 
+              disabled={isUpdating} 
+              className="w-full mt-12 h-24 rounded-[2.5rem] bg-indigo-600 text-white text-[11px] font-black uppercase tracking-[0.5em] flex items-center justify-center gap-6 hover:bg-indigo-500 transition-all shadow-3xl active:scale-[0.98] disabled:opacity-50"
+            >
+              {isUpdating ? <Loader2 className="h-8 w-8 animate-spin" /> : <Save className="h-8 w-8" />} Update Transaction Signal
+            </button>
             <AnimatePresence>
               {correctionMsg && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className={`mt-10 p-6 rounded-2xl flex items-center gap-4 text-[10px] font-black uppercase tracking-widest border ${
-                    correctionMsg.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                  }`}>
-                  {correctionMsg.type === 'success' ? <ShieldCheck className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
-                  {correctionMsg.text}
+                <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className={`mt-10 p-8 rounded-[2.5rem] border shadow-2xl backdrop-blur-md ${correctionMsg.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
+                  <div className="flex items-center gap-6">
+                    <div className={`h-12 w-12 rounded-2xl flex items-center justify-center ${correctionMsg.type === 'success' ? 'bg-emerald-500/20' : 'bg-rose-500/20'}`}>
+                      {correctionMsg.type === 'success' ? <ShieldCheck className="h-6 w-6" /> : <AlertTriangle className="h-6 w-6" />}
+                    </div>
+                    <span className="text-xs font-black uppercase tracking-widest leading-relaxed">{correctionMsg.text}</span>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -849,40 +1182,8 @@ export default function TransactionDetail() {
         </motion.div>
       )}
 
-      {/* Forensic Timeline */}
-      <div className="bg-white rounded-[4rem] p-12 md:p-16 shadow-3xl border border-slate-100">
-          <div className="flex items-center gap-4 mb-16">
-            <Activity className="h-8 w-8 text-indigo-600" />
-            <h3 className="text-2xl font-black italic tracking-tighter uppercase">Forensic Activity Stream</h3>
-          </div>
-          
-          <div className="space-y-12 relative before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-50">
-            {logs.length === 0 ? (
-              <p className="pl-12 text-[10px] font-black uppercase tracking-widest text-slate-300 italic">No activity drifts detected.</p>
-            ) : (
-              logs.map((log, idx) => (
-                <motion.div key={log.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }} className="relative pl-12">
-                  <div className="absolute left-0 top-1.5 h-6 w-6 rounded-full bg-white border-2 border-indigo-500 shadow-sm flex items-center justify-center z-10">
-                     <div className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                  </div>
-                  <div className="flex flex-col md:flex-row justify-between gap-6">
-                    <div>
-                      <span className={`text-[10px] font-black uppercase tracking-widest px-4 py-1.5 rounded-lg border ${
-                        log.action === 'UPDATE' ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                      }`}>{log.action}</span>
-                      <p className="mt-4 text-xs font-bold text-slate-800">Operator: {log.performer?.email || log.performed_by}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                       <span className="text-[11px] font-black text-slate-900 tabular-nums block">{new Date(log.created_at).toLocaleTimeString()}</span>
-                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">{new Date(log.created_at).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                </motion.div>
-              ))
-            )}
-          </div>
-      </div>
-      <style>{`.animate-spin-slow { animation: spin 12s linear infinite; } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      <style>{`.animate-spin-slow { animation: spin 12s linear infinite; } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } .scrollbar-hide::-webkit-scrollbar { display: none; } .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
     </motion.div>
   );
 }
+

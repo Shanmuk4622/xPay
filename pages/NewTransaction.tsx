@@ -6,7 +6,6 @@ import { useAuth } from '../context/AuthContext';
 import { GoogleGenAI } from "@google/genai";
 import { motion, AnimatePresence } from 'framer-motion';
 import { z } from 'zod';
-// Added ShieldCheck to the lucide-react imports
 import { 
   ArrowLeft, 
   Loader2, 
@@ -19,17 +18,34 @@ import {
   ShieldCheck,
   Cpu,
   Sparkles,
-  LockKeyhole
+  LockKeyhole,
+  X,
+  Bell,
+  Search,
+  History
 } from 'lucide-react';
 
 type PaymentMode = 'cash' | 'bank' | 'upi';
+
+interface Toast {
+  id: string;
+  message: string;
+  type: 'error' | 'success' | 'warning' | 'info';
+}
+
+// Granular schema for source field
+const sourceSchema = z.string()
+  .min(3, "Entity source must be at least 3 characters")
+  .max(60, "Source name exceeds architectural limits")
+  .regex(/^[a-zA-Z0-9]+(?:\s[a-zA-Z0-9]+)*$/, "Only alphanumeric characters and single internal spaces allowed")
+  .refine(val => val.trim().length > 0, "Source cannot be empty whitespace");
 
 const transactionSchema = z.object({
   amount: z.string().refine((val) => {
     const num = parseFloat(val.replace(/,/g, ''));
     return !isNaN(num) && num > 0;
   }, { message: "Settlement value must be a positive number" }),
-  source: z.string().min(2, "Entity source must be at least 2 characters").max(100, "Source name too long"),
+  source: sourceSchema,
   paymentMode: z.enum(['cash', 'bank', 'upi'] as const),
   referenceId: z.string().optional()
 }).refine((data) => {
@@ -58,6 +74,19 @@ export default function NewTransaction() {
   
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditWarning, setAuditWarning] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const addToast = (message: string, type: 'error' | 'success' | 'warning' | 'info' = 'error') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 6000);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
 
   useEffect(() => {
     if (paymentMode === 'cash') {
@@ -110,6 +139,26 @@ export default function NewTransaction() {
     }
   };
 
+  const checkDuplicateSource = async (sourceName: string) => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('id, amount, created_at')
+      .ilike('source', sourceName.trim())
+      .gte('created_at', thirtyDaysAgo.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.error('Duplicate check failure:', error);
+      return null;
+    }
+
+    return data && data.length > 0 ? data[0] : null;
+  };
+
   const validateForm = useCallback(() => {
     const result = transactionSchema.safeParse({
       amount,
@@ -129,6 +178,12 @@ export default function NewTransaction() {
         }
       });
       setFieldErrors(errors);
+      
+      // Trigger toasts for each validation issue for granular feedback
+      result.error.issues.forEach((issue) => {
+        addToast(issue.message, 'error');
+      });
+      
       return false;
     }
 
@@ -136,10 +191,21 @@ export default function NewTransaction() {
     return true;
   }, [amount, source, paymentMode, referenceId]);
 
-  const handleInitialSubmit = (e: React.FormEvent) => {
+  const handleInitialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (validateForm()) {
-      setShowModal(true);
+      setIsSubmitting(true);
+      const duplicateRecord = await checkDuplicateSource(source);
+      setIsSubmitting(false);
+      
+      if (duplicateRecord) {
+        const prevDate = new Date(duplicateRecord.created_at).toLocaleDateString();
+        addToast(`Forensic Warning: An entry for "${source}" (₹${duplicateRecord.amount.toLocaleString()}) was recorded on ${prevDate}. This may be a double entry.`, 'warning');
+        // We still show the modal but the warning is loud
+        setShowModal(true);
+      } else {
+        setShowModal(true);
+      }
     }
   };
 
@@ -162,7 +228,6 @@ export default function NewTransaction() {
     setError(null);
     
     try {
-      // CSPRNG Audit Seal Generation
       const secureId = generateSecureId();
       
       const payload = {
@@ -179,9 +244,12 @@ export default function NewTransaction() {
       const { error: insertError } = await supabase.from('transactions').insert([payload]);
       if (insertError) throw insertError;
       
+      addToast('Transaction authorized and ledger updated.', 'success');
       navigate('/', { replace: true });
     } catch (err: any) {
-      setError(err.message || 'Transaction authorization failed during ledger write.');
+      const errMsg = err.message || 'Transaction authorization failed during ledger write.';
+      setError(errMsg);
+      addToast(errMsg, 'error');
       setShowModal(false);
     } finally {
       setIsSubmitting(false);
@@ -192,8 +260,47 @@ export default function NewTransaction() {
     <motion.div 
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
-      className="max-w-2xl mx-auto py-8"
+      className="max-w-2xl mx-auto py-8 relative"
     >
+      {/* Premium Toast Notification Stack */}
+      <div className="fixed top-24 right-8 z-[300] flex flex-col gap-4 pointer-events-none w-80">
+        <AnimatePresence mode="popLayout">
+          {toasts.map((toast) => (
+            <motion.div
+              key={toast.id}
+              layout
+              initial={{ opacity: 0, x: 100, scale: 0.8 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 20, scale: 0.9, transition: { duration: 0.2 } }}
+              className={`pointer-events-auto flex items-start gap-4 px-6 py-5 rounded-[1.5rem] shadow-premium backdrop-blur-2xl border transition-all ${
+                toast.type === 'error' ? 'bg-rose-500/90 border-rose-400 text-white' :
+                toast.type === 'success' ? 'bg-emerald-600/90 border-emerald-500 text-white' :
+                toast.type === 'warning' ? 'bg-amber-500/90 border-amber-400 text-white' :
+                'bg-indigo-600/90 border-indigo-500 text-white'
+              }`}
+            >
+              <div className="mt-0.5 shrink-0">
+                {toast.type === 'error' ? <ShieldAlert className="h-5 w-5" /> : 
+                 toast.type === 'success' ? <CheckCircle2 className="h-5 w-5" /> : 
+                 toast.type === 'warning' ? <AlertCircle className="h-5 w-5" /> :
+                 <Bell className="h-5 w-5" />}
+              </div>
+              <div className="flex-1 space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
+                  {toast.type === 'error' ? 'Security Protocol Error' : 
+                   toast.type === 'warning' ? 'Ledger Conflict Warning' : 
+                   'System Intelligence'}
+                </p>
+                <p className="text-xs font-bold leading-relaxed">{toast.message}</p>
+              </div>
+              <button onClick={() => removeToast(toast.id)} className="shrink-0 p-1 hover:bg-white/10 rounded-lg transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
       <button 
         onClick={() => navigate(-1)} 
         className="mb-10 group flex items-center text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 hover:text-indigo-600 transition-colors"
@@ -202,7 +309,7 @@ export default function NewTransaction() {
         Back to Console
       </button>
 
-      <div className="overflow-hidden rounded-[3.5rem] bg-white shadow-[0_50px_100px_-20px_rgba(0,0,0,0.1)] ring-1 ring-slate-100">
+      <div className="overflow-hidden rounded-[3.5rem] bg-white shadow-3xl ring-1 ring-slate-100">
         <div className="bg-slate-950 px-12 py-12 text-white relative">
            <div className="absolute top-0 right-0 p-12 opacity-10">
               <Cpu className="h-24 w-24" />
@@ -299,7 +406,9 @@ export default function NewTransaction() {
                   )}
                 </div>
                 <div className="relative">
-                  <FileText className={`absolute left-8 top-1/2 h-6 w-6 -translate-y-1/2 transition-colors ${fieldErrors.source ? 'text-rose-400' : 'text-slate-300'}`} />
+                  <div className={`absolute left-8 top-1/2 -translate-y-1/2 transition-colors ${fieldErrors.source ? 'text-rose-400' : 'text-slate-300'}`}>
+                    <Search className="h-6 w-6" />
+                  </div>
                   <input
                     type="text"
                     value={source}
@@ -312,7 +421,7 @@ export default function NewTransaction() {
                       });
                     }}
                     className={`h-20 w-full rounded-[2rem] border-none bg-slate-50 pl-20 pr-8 text-base font-bold shadow-inner focus:ring-8 transition-all ${fieldErrors.source ? 'ring-2 ring-rose-500 focus:ring-rose-100' : 'focus:ring-indigo-600/5'}`}
-                    placeholder="Merchant or Org Name"
+                    placeholder="ALPHANUMERIC MERCHANT NAME"
                   />
                 </div>
                 <AnimatePresence mode="wait">
@@ -333,10 +442,10 @@ export default function NewTransaction() {
                     <motion.div 
                       initial={{ opacity: 0, x: -10 }} 
                       animate={{ opacity: 1, x: 0 }}
-                      className="flex items-start gap-3 p-4 rounded-2xl bg-amber-50 border border-amber-100 text-amber-700"
+                      className="flex items-start gap-3 p-5 rounded-3xl bg-amber-50 border border-amber-100 text-amber-700 shadow-sm"
                     >
                        <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-                       <span className="text-[11px] font-black uppercase tracking-tight">{auditWarning}</span>
+                       <span className="text-[11px] font-black uppercase tracking-tight leading-relaxed">{auditWarning}</span>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -389,9 +498,10 @@ export default function NewTransaction() {
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               type="submit"
-              className="w-full rounded-[2.5rem] bg-slate-950 py-8 text-xs font-black uppercase tracking-[0.5em] text-white shadow-2xl transition-all hover:bg-black active:bg-indigo-900 flex items-center justify-center gap-4"
+              disabled={isSubmitting}
+              className="w-full rounded-[2.5rem] bg-slate-950 py-8 text-xs font-black uppercase tracking-[0.5em] text-white shadow-2xl transition-all hover:bg-black active:bg-indigo-900 flex items-center justify-center gap-4 disabled:opacity-50"
             >
-              Authorize Signal Entry
+              {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Authorize Signal Entry'}
             </motion.button>
           </form>
         </div>
