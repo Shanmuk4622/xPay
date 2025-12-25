@@ -1,8 +1,7 @@
-
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
-import { LogOut, LayoutDashboard } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
+import { LogOut, LayoutDashboard, PlusCircle, Search, FileBarChart } from 'lucide-react';
 
 export default function Dashboard() {
   const { user, role, signOut } = useAuth();
@@ -12,6 +11,8 @@ export default function Dashboard() {
     await signOut();
     navigate('/login');
   };
+
+  const isAdmin = role === 'admin' || role === 'super_admin';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -53,18 +54,53 @@ export default function Dashboard() {
                 {role === 'user' && ' You have read-only access to your assigned transactions.'}
               </p>
             </div>
-            <div className="mt-6">
-              <div className="rounded-md bg-blue-50 p-4">
-                <div className="flex">
-                  <div className="ml-3">
-                    <h3 className="text-sm font-medium text-blue-800">System Status</h3>
-                    <div className="mt-2 text-sm text-blue-700">
-                      <p>Connected to Supabase. RLS policies are active.</p>
+            
+            <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {/* Admin Actions */}
+                {isAdmin && (
+                    <>
+                        <Link to="/transactions/new" className="relative flex items-center space-x-3 rounded-lg border border-gray-300 bg-white px-6 py-5 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 hover:border-gray-400 hover:bg-gray-50">
+                            <div className="flex-shrink-0">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+                                    <PlusCircle className="h-6 w-6" />
+                                </div>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <span className="absolute inset-0" aria-hidden="true" />
+                                <p className="text-sm font-medium text-gray-900">New Transaction</p>
+                                <p className="truncate text-sm text-gray-500">Record a payment entry</p>
+                            </div>
+                        </Link>
+
+                        <Link to="/admin/search" className="relative flex items-center space-x-3 rounded-lg border border-gray-300 bg-white px-6 py-5 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 hover:border-gray-400 hover:bg-gray-50">
+                            <div className="flex-shrink-0">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100 text-green-600">
+                                    <Search className="h-6 w-6" />
+                                </div>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <span className="absolute inset-0" aria-hidden="true" />
+                                <p className="text-sm font-medium text-gray-900">Global Search</p>
+                                <p className="truncate text-sm text-gray-500">Filter and view history</p>
+                            </div>
+                        </Link>
+                    </>
+                )}
+
+                <div className="relative flex items-center space-x-3 rounded-lg border border-gray-300 bg-white px-6 py-5 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 hover:border-gray-400 hover:bg-gray-50">
+                    <div className="flex-shrink-0">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-yellow-100 text-yellow-600">
+                            <FileBarChart className="h-6 w-6" />
+                        </div>
                     </div>
-                  </div>
+                    <div className="min-w-0 flex-1">
+                        <span className="absolute inset-0" aria-hidden="true" />
+                        <p className="text-sm font-medium text-gray-900">My Reports</p>
+                        <p className="truncate text-sm text-gray-500">View your activity</p>
+                    </div>
                 </div>
-              </div>
             </div>
+
           </div>
         </div>
       </main>

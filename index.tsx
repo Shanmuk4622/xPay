@@ -7,6 +7,8 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ResetPassword from './pages/ResetPassword';
 import NewTransaction from './pages/NewTransaction';
+import AdminSearch from './pages/AdminSearch';
+import TransactionDetail from './pages/TransactionDetail';
 import './index.css'; // Assuming Tailwind directives are here or handled by the environment
 
 const App = () => {
@@ -27,6 +29,8 @@ const App = () => {
           {/* Admin & Super Admin Routes */}
           <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>
              <Route path="/transactions/new" element={<NewTransaction />} />
+             <Route path="/admin/search" element={<AdminSearch />} />
+             <Route path="/admin/transactions/:id" element={<TransactionDetail />} />
           </Route>
 
           {/* Example of Role Specific Route */}
