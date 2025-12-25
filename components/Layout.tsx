@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth, AppRole } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -12,15 +12,17 @@ import {
   Menu,
   X,
   Zap,
-  ShieldCheck,
   Cpu,
-  Camera
+  Camera,
+  Command
 } from 'lucide-react';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, role, signOut } = useAuth();
+  const { role, signOut } = useAuth();
+  const navigate = useNavigate();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+  const [globalSearch, setGlobalSearch] = useState('');
 
   const navItems: Array<{ label: string; path: string; icon: any; roles?: AppRole[] }> = [
     { label: 'Pulse', path: '/', icon: LayoutDashboard },
@@ -33,6 +35,27 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const filteredNav = navItems.filter(item => 
     !item.roles || (role && item.roles.includes(role))
   );
+
+  const handleGlobalSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!globalSearch.trim()) return;
+    navigate(`/admin/search?q=${encodeURIComponent(globalSearch.trim())}`);
+    setGlobalSearch('');
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        const searchInput = document.getElementById('global-command-search');
+        searchInput?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const isAdmin = role === 'admin' || role === 'super_admin';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
@@ -53,7 +76,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                 </span>
               </Link>
 
-              <div className="hidden md:flex items-center gap-2">
+              <div className="hidden lg:flex items-center gap-2">
                 {filteredNav.map(item => (
                   <Link
                     key={item.path}
@@ -76,20 +99,69 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                onClick={() => signOut()}
-                className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-50 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all border border-slate-200"
-              >
-                <LogOut className="h-5 w-5" />
-              </motion.button>
-              <button className="md:hidden h-10 w-10 flex items-center justify-center rounded-xl bg-slate-900 text-white" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-                {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-              </button>
+            <div className="flex items-center gap-6">
+              {isAdmin && (
+                <form onSubmit={handleGlobalSearch} className="hidden md:flex relative items-center group">
+                   <div className="absolute left-4 pointer-events-none">
+                      <Search className="h-3.5 w-3.5 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
+                   </div>
+                   <input 
+                     id="global-command-search"
+                     type="text"
+                     value={globalSearch}
+                     onChange={(e) => setGlobalSearch(e.target.value)}
+                     placeholder="Global Search..."
+                     className="bg-slate-100 border-none rounded-2xl h-10 pl-10 pr-16 text-[10px] font-black uppercase tracking-widest text-slate-900 placeholder:text-slate-400 focus:ring-4 focus:ring-indigo-600/5 transition-all w-48 focus:w-80 shadow-inner"
+                   />
+                   <div className="absolute right-3 hidden md:flex items-center gap-1 bg-white px-1.5 py-0.5 rounded-md border border-slate-200 opacity-50">
+                      <Command className="h-2 w-2 text-slate-500" />
+                      <span className="text-[8px] font-black text-slate-500">K</span>
+                   </div>
+                </form>
+              )}
+
+              <div className="flex items-center gap-4">
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => signOut()}
+                  className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-50 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all border border-slate-200"
+                >
+                  <LogOut className="h-5 w-5" />
+                </motion.button>
+                <button className="lg:hidden h-10 w-10 flex items-center justify-center rounded-xl bg-slate-900 text-white" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+                  {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                </button>
+              </div>
             </div>
           </div>
         </div>
+        
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="lg:hidden bg-white border-t border-slate-100 overflow-hidden"
+            >
+              <div className="p-4 space-y-2">
+                {filteredNav.map(item => (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className={`flex items-center gap-4 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
+                      location.pathname === item.path ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </nav>
 
       <main className="flex-grow">

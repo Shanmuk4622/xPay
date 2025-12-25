@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from 'framer-motion';
-import { Camera, Loader2, ArrowLeft, Zap, AlertCircle, Save, RefreshCw, FileText, Database, Trash2 } from 'lucide-react';
+import { Camera, Loader2, ArrowLeft, AlertCircle, Save, RefreshCw, FileText, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -25,13 +25,14 @@ export default function ScanReceipt() {
         setError("File size limit (5MB) exceeded.");
         return;
       }
+      
       const reader = new FileReader();
       reader.onloadend = () => {
         const result = reader.result as string;
         setImage(result);
         analyzeReceipt(result);
       };
-      reader.onerror = () => setError("Disk read failure.");
+      reader.onerror = () => setError("Hardware read failure.");
       reader.readAsDataURL(file);
     }
   };
@@ -45,18 +46,17 @@ export default function ScanReceipt() {
       
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const parts = base64Data.split(',');
-      if (parts.length < 2) throw new Error("Malformed document packet.");
+      if (parts.length < 2) throw new Error("Invalid document signal stream.");
       
       const mimeType = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
       const base64Content = parts[1];
 
-      // Switched to gemini-3-flash-preview for full responseSchema support
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: {
           parts: [
             { inlineData: { data: base64Content, mimeType } },
-            { text: "Extract financial record details strictly as JSON. amount (number), source (merchant string), payment_mode ('cash','bank','upi'), and date (ISO string if found)." }
+            { text: "Extract financial record details strictly as JSON. properties: amount (number), source (string), payment_mode ('cash','bank','upi'), date (ISO string)." }
           ]
         },
         config: {
@@ -74,22 +74,14 @@ export default function ScanReceipt() {
         }
       });
 
-      let textOutput = response.text || "";
-      
-      // Secondary cleanup using refined regex for markdown boundaries
-      if (textOutput.includes("```")) {
-        textOutput = textOutput.replace(/```(json)?|```/g, "").trim();
-      }
+      if (!response.text) throw new Error("AI node returned empty consensus.");
       
       try {
-        const result = JSON.parse(textOutput);
-        if (typeof result.amount !== 'number' || !result.source) {
-          throw new Error("Validation mismatch in extracted neural data.");
-        }
+        const result = JSON.parse(response.text.trim());
         setExtractedData(result);
       } catch (parseErr) {
-        console.error("Neural parsing error:", textOutput);
-        throw new Error("Could not decrypt AI intelligence into structured ledger data.");
+        console.error("Neural parsing error:", response.text);
+        throw new Error("Could not decrypt multimodal response.");
       }
     } catch (err: any) {
       console.error("Vision Terminal Error:", err);
@@ -102,6 +94,7 @@ export default function ScanReceipt() {
   const commitTransaction = async () => {
     if (!user || !extractedData) return;
     setIsCommitting(true);
+    setError(null);
     try {
       const payload = {
         amount: extractedData.amount,
@@ -116,7 +109,7 @@ export default function ScanReceipt() {
       if (insertError) throw insertError;
       navigate('/');
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Ledger synchronization failed.");
       setIsCommitting(false);
     }
   };
@@ -131,7 +124,7 @@ export default function ScanReceipt() {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-7xl mx-auto py-10">
       <div className="flex items-center justify-between mb-12 px-4">
         <button onClick={() => navigate(-1)} className="group flex items-center text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 hover:text-indigo-600 transition-all">
-          <ArrowLeft className="h-5 w-5 mr-3 group-hover:-translate-x-1" /> Back to Dashboard
+          <ArrowLeft className="h-5 w-5 mr-3 group-hover:-translate-x-1" /> Dashboard
         </button>
         <div className="flex items-center gap-6">
            <button onClick={resetScanner} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 className="h-4 w-4" /></button>
@@ -143,7 +136,7 @@ export default function ScanReceipt() {
         <div className="flex-1 space-y-8">
           <header>
             <h1 className="text-5xl font-black italic tracking-tighter text-slate-900 leading-none">Vision Pulse</h1>
-            <p className="mt-6 text-slate-500 font-medium max-w-lg leading-relaxed">Multimodal forensic extraction for converting physical artifacts into cryptographically verified ledger entries.</p>
+            <p className="mt-6 text-slate-500 font-medium max-w-lg leading-relaxed">Multimodal forensic extraction for converting physical artifacts into verified ledger entries.</p>
           </header>
           
           <div 
@@ -204,7 +197,7 @@ export default function ScanReceipt() {
                           </select>
                        </div>
                        <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800">
-                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-600">Temporal Index</label>
+                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-600">Index</label>
                           <p className="mt-2 text-xs font-black text-white">{extractedData.date ? new Date(extractedData.date).toLocaleDateString() : 'Auto-Now'}</p>
                        </div>
                     </div>
