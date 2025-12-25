@@ -17,6 +17,8 @@ export default defineConfig(({ mode }) => {
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
+          '@google/genai': path.resolve(__dirname, 'shims/google-genai.ts'),
+          'framer-motion': path.resolve(__dirname, 'shims/framer-motion.tsx'),
         }
       }
     };

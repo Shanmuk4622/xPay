@@ -22,12 +22,17 @@ export function AuthProvider({ children }: PropsWithChildren<{}>) {
 
   const fetchUserRole = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', userId)
-        .maybeSingle();
+      // Protect against network stalls by racing the DB call with a timeout
+      const dbCall = supabase.from('users').select('role').eq('id', userId).maybeSingle();
+      const timeout = new Promise<any>((resolve) => setTimeout(() => resolve({ timeout: true }), 5000));
+      const result: any = await Promise.race([dbCall, timeout]);
 
+      if (result && result.timeout) {
+        console.warn('Role fetch timed out — defaulting to user');
+        return 'user';
+      }
+
+      const { data, error } = result;
       if (error) {
         console.error('Role fetch error:', error);
         return 'user';
@@ -48,6 +53,7 @@ export function AuthProvider({ children }: PropsWithChildren<{}>) {
         if (!mounted) return;
 
         if (initialSession?.user) {
+          // Fetch role but guard with timeout inside fetchUserRole
           const userRole = await fetchUserRole(initialSession.user.id);
           if (mounted) {
             setSession(initialSession);
@@ -76,12 +82,17 @@ export function AuthProvider({ children }: PropsWithChildren<{}>) {
         }
 
         setLoading(true);
-        const userRole = await fetchUserRole(currentSession.user.id);
-        if (mounted) {
-          setSession(currentSession);
-          setUser(currentSession.user);
-          setRole(userRole);
-          setLoading(false);
+        try {
+          const userRole = await fetchUserRole(currentSession.user.id);
+          if (mounted) {
+            setSession(currentSession);
+            setUser(currentSession.user);
+            setRole(userRole);
+          }
+        } catch (err) {
+          console.error('Error fetching role on auth change:', err);
+        } finally {
+          if (mounted) setLoading(false);
         }
       } else {
         setSession(null);

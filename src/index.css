@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/* Tailwind v4 theme configuration */
+@theme {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  
+  --color-brand-primary: #4f46e5;
+  --color-brand-bg: #f8fafc;
+}
+
+/* Custom base styles */
+:root {
+  --brand-primary: #4f46e5;
+  --brand-bg: #f8fafc;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background-color: var(--brand-bg);
+  color: #0f172a;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

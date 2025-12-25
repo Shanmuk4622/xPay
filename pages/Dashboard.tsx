@@ -175,9 +175,9 @@ export default function Dashboard() {
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-8 px-2">
         <div>
           <h1 className="text-5xl font-black tracking-tight text-slate-900 italic leading-none">Command Center</h1>
-          <p className="mt-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.5em] flex items-center gap-3">
+          <div className="mt-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.5em] flex items-center gap-3">
              <div className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-ping" /> Unit Telemetry Nominal
-          </p>
+          </div>
         </div>
         <div className="flex gap-4">
            {forecast && (
