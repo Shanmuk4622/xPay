@@ -2,12 +2,12 @@ import React, { createContext, useContext, useEffect, useState, PropsWithChildre
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
-type AppRole = 'super_admin' | 'admin' | 'user' | null;
+export type AppRole = 'super_admin' | 'admin' | 'user';
 
 interface AuthContextType {
   session: Session | null;
   user: User | null;
-  role: AppRole;
+  role: AppRole | null;
   loading: boolean;
   signOut: () => Promise<void>;
 }
@@ -17,84 +17,77 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: PropsWithChildren<{}>) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [role, setRole] = useState<AppRole>(null);
+  const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const fetchUserRole = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Role fetch error:', error);
+        return 'user';
+      }
+      return (data?.role as AppRole) || 'user';
+    } catch (err) {
+      console.error('Unexpected error fetching role:', err);
+      return 'user';
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
 
-    // Fetch role from the public.users table
-    const fetchUserRole = async (userId: string) => {
+    const initializeAuth = async () => {
       try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('role')
-          .eq('id', userId)
-          .maybeSingle();
+        const { data: { session: initialSession } } = await supabase.auth.getSession();
+        if (!mounted) return;
 
-        if (mounted) {
-          if (error) {
-            console.error('Error fetching user role:', error);
-            // Default to 'user' restricted access on error
-            setRole('user');
-          } else if (data) {
-            setRole(data.role as AppRole);
-          } else {
-            console.warn('User authenticated but not found in public.users');
-            // Default to 'user' restricted access if record missing
-            setRole('user');
+        if (initialSession?.user) {
+          const userRole = await fetchUserRole(initialSession.user.id);
+          if (mounted) {
+            setSession(initialSession);
+            setUser(initialSession.user);
+            setRole(userRole);
           }
         }
       } catch (err) {
-        console.error('Unexpected error fetching role:', err);
-        if (mounted) setRole('user');
+        console.error('Auth initialization failed:', err);
       } finally {
         if (mounted) setLoading(false);
       }
     };
 
-    // 1. Check active session on mount
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (mounted) {
-          setSession(session);
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            await fetchUserRole(session.user.id);
-          } else {
-            setRole(null);
-            setLoading(false);
-          }
+    initializeAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+      if (!mounted) return;
+
+      if (currentSession?.user) {
+        // If we already have this user and role, don't trigger a full reload
+        if (user?.id === currentSession.user.id && role) {
+          setSession(currentSession);
+          setUser(currentSession.user);
+          return;
         }
-      } catch (error) {
-        console.error('Session check failed', error);
+
+        setLoading(true);
+        const userRole = await fetchUserRole(currentSession.user.id);
         if (mounted) {
+          setSession(currentSession);
+          setUser(currentSession.user);
+          setRole(userRole);
           setLoading(false);
         }
-      }
-    };
-
-    checkSession();
-
-    // 2. Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (mounted) {
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          // Reset loading to true while we fetch the new role
-          setLoading(true);
-          await fetchUserRole(session.user.id);
-        } else {
-          setRole(null);
-          setLoading(false);
-        }
+      } else {
+        setSession(null);
+        setUser(null);
+        setRole(null);
+        setLoading(false);
       }
     });
 
@@ -102,13 +95,15 @@ export function AuthProvider({ children }: PropsWithChildren<{}>) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [user?.id, role]);
 
   const signOut = async () => {
+    setLoading(true);
     await supabase.auth.signOut();
     setRole(null);
     setSession(null);
     setUser(null);
+    setLoading(false);
   };
 
   return (

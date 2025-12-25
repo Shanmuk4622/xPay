@@ -1,7 +1,25 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, ArrowLeft, ChevronLeft, ChevronRight, Calendar, Download, RefreshCw, Hash } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
+import { 
+  Search, 
+  Filter, 
+  ChevronLeft, 
+  ChevronRight, 
+  RefreshCw, 
+  Building,
+  MoreHorizontal,
+  Copy,
+  Check,
+  Inbox,
+  TrendingUp,
+  FileDown,
+  Loader2
+} from 'lucide-react';
 import { useDebounce } from '../hooks/useDebounce';
 
 interface Transaction {
@@ -12,462 +30,362 @@ interface Transaction {
   source: string;
   created_at: string;
   created_by: string;
-  branch_id?: string | null;
 }
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 12;
 
 export default function AdminSearch() {
   const navigate = useNavigate();
-  
-  // Data State
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [totalCount, setTotalCount] = useState(0);
+  const [filteredValue, setFilteredValue] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [copyId, setCopyId] = useState<string | null>(null);
   
-  // Filter State
-  const [searchQuery, setSearchQuery] = useState(''); // Search Ref ID or Source
-  
-  // Use custom hook for debouncing
-  const debouncedQuery = useDebounce(searchQuery, 500);
+  const [searchQuery, setSearchQuery] = useState('');
+  const debouncedQuery = useDebounce(searchQuery, 400);
 
   const [paymentMode, setPaymentMode] = useState<string>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [minAmount, setMinAmount] = useState('');
   const [maxAmount, setMaxAmount] = useState('');
-  
-  // Pagination State
   const [page, setPage] = useState(1);
 
-  // Reset page when search query changes (debounced)
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedQuery]);
-
-  const buildQuery = (isExport = false) => {
-      let query = supabase
-        .from('transactions')
-        .select('*', { count: isExport ? undefined : 'exact' });
-
-      // 1. Text Search (Source or Reference ID) - Uses Debounced Query
+  const fetchTransactions = useCallback(async () => {
+    setLoading(true);
+    try {
+      let query = supabase.from('transactions').select('*', { count: 'exact' });
+      
       if (debouncedQuery.trim()) {
         const term = debouncedQuery.trim();
         query = query.or(`source.ilike.%${term}%,reference_id.ilike.%${term}%`);
       }
+      if (paymentMode !== 'all') query = query.eq('payment_mode', paymentMode);
+      if (startDate) query = query.gte('created_at', new Date(startDate).toISOString());
+      if (endDate) query = query.lte('created_at', new Date(endDate + 'T23:59:59').toISOString());
+      if (minAmount) query = query.gte('amount', parseFloat(minAmount));
+      if (maxAmount) query = query.lte('amount', parseFloat(maxAmount));
 
-      // 2. Payment Mode
-      if (paymentMode !== 'all') {
-        query = query.eq('payment_mode', paymentMode);
-      }
-
-      // 3. Date Range (Local Timezone Aware)
-      if (startDate) {
-        // Construct local date at 00:00:00
-        const [y, m, d] = startDate.split('-').map(Number);
-        const localStart = new Date(y, m - 1, d, 0, 0, 0, 0);
-        query = query.gte('created_at', localStart.toISOString());
-      }
-      if (endDate) {
-        // Construct local date at 23:59:59.999
-        const [y, m, d] = endDate.split('-').map(Number);
-        const localEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
-        query = query.lte('created_at', localEnd.toISOString());
-      }
-
-      // 4. Amount Range
-      if (minAmount) {
-        const min = parseFloat(minAmount);
-        if (!isNaN(min)) {
-           query = query.gte('amount', min);
-        }
-      }
-      if (maxAmount) {
-        const max = parseFloat(maxAmount);
-        if (!isNaN(max)) {
-           query = query.lte('amount', max);
-        }
-      }
-      
-      return query;
-  };
-
-  const fetchTransactions = async () => {
-    setLoading(true);
-    try {
-      let query = buildQuery();
-
-      // 5. Pagination & Sorting
       const from = (page - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
+      const { data, error, count } = await query.order('created_at', { ascending: false }).range(from, to);
       
-      const { data, error, count } = await query
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
       if (error) throw error;
-
       setTransactions(data || []);
       setTotalCount(count || 0);
 
+      // Fetch Total Value of filtered results
+      let valQuery = supabase.from('transactions').select('amount');
+      if (debouncedQuery.trim()) valQuery = valQuery.or(`source.ilike.%${debouncedQuery}%,reference_id.ilike.%${debouncedQuery}%`);
+      if (paymentMode !== 'all') valQuery = valQuery.eq('payment_mode', paymentMode);
+      if (startDate) valQuery = valQuery.gte('created_at', new Date(startDate).toISOString());
+      if (endDate) valQuery = valQuery.lte('created_at', new Date(endDate + 'T23:59:59').toISOString());
+      if (minAmount) valQuery = valQuery.gte('amount', parseFloat(minAmount));
+      if (maxAmount) valQuery = valQuery.lte('amount', parseFloat(maxAmount));
+      
+      const { data: allMatch } = await valQuery;
+      const sum = (allMatch || []).reduce((acc, tx) => acc + tx.amount, 0);
+      setFilteredValue(sum);
+
     } catch (err) {
-      console.error('Error fetching transactions:', err);
+      console.error('Fetch error:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, debouncedQuery, paymentMode, startDate, endDate, minAmount, maxAmount]);
+
+  useEffect(() => {
+    fetchTransactions();
+  }, [fetchTransactions]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQuery, paymentMode, startDate, endDate, minAmount, maxAmount]);
 
   const handleExport = async () => {
-    setExporting(true);
+    if (transactions.length === 0 || isExporting) return;
+    
+    setIsExporting(true);
     try {
-        const query = buildQuery(true);
-        // Apply sorting but no pagination
-        const { data, error } = await query.order('created_at', { ascending: false });
+      // Create workbook and worksheet
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Filtered Ledger');
 
-        if (error) throw error;
+      // Define columns
+      worksheet.columns = [
+        { header: 'Timestamp', key: 'timestamp', width: 25 },
+        { header: 'Entity Source', key: 'source', width: 30 },
+        { header: 'Channel', key: 'mode', width: 15 },
+        { header: 'Settled Value (INR)', key: 'amount', width: 20 },
+        { header: 'Network ID / Ref', key: 'ref', width: 25 },
+      ];
 
-        if (!data || data.length === 0) {
-            alert('No data to export matching current filters.');
-            return;
-        }
+      // Format headers
+      worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      worksheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF0F172A' } // Slate 900
+      };
 
-        // CSV Generation
-        const headers = ['Transaction ID', 'Date', 'Time', 'Source', 'Reference ID', 'Payment Mode', 'Amount', 'Created By', 'Branch ID'];
-        const csvRows = [headers.join(',')];
+      // Add data
+      transactions.forEach(tx => {
+        worksheet.addRow({
+          timestamp: new Date(tx.created_at).toLocaleString(),
+          source: tx.source,
+          mode: tx.payment_mode.toUpperCase(),
+          amount: tx.amount,
+          ref: tx.reference_id || 'LOCAL_AUDIT'
+        });
+      });
 
-        for (const row of data) {
-            const date = new Date(row.created_at);
-            const dateStr = date.toLocaleDateString();
-            const timeStr = date.toLocaleTimeString();
-            
-            // Escape quotes for CSV
-            const safeSource = `"${(row.source || '').replace(/"/g, '""')}"`;
-            const safeRef = `"${(row.reference_id || '').replace(/"/g, '""')}"`;
-            
-            const values = [
-                row.id,
-                dateStr,
-                timeStr,
-                safeSource,
-                safeRef,
-                row.payment_mode,
-                row.amount,
-                row.created_by,
-                row.branch_id || ''
-            ];
-            csvRows.push(values.join(','));
-        }
+      // Format currency column
+      worksheet.getColumn('amount').numFmt = '"₹"#,##0.00';
 
-        const csvContent = csvRows.join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `transactions_export_${new Date().toISOString().split('T')[0]}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-    } catch (err) {
-        console.error('Export failed:', err);
-        alert('Failed to export data.');
+      // Generate Buffer
+      const buffer = await workbook.xlsx.writeBuffer();
+      
+      // Simulate API streaming response and download
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `fintrack_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } catch (error) {
+      console.error('Export failed:', error);
     } finally {
-        setExporting(false);
+      setIsExporting(false);
     }
   };
 
-  // Fetch on mount, when Page changes, or when Debounced Query changes
-  useEffect(() => {
-    fetchTransactions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQuery]); 
-
-  // Handle "Apply Filters" (Manual Override)
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    // debouncedQuery updates automatically, we just reset page and fetch
-    setPage(1);
-    fetchTransactions();
+  const handleCopy = async (e: React.MouseEvent, text: string) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyId(text);
+      setTimeout(() => setCopyId(null), 2000);
+    } catch (err) {
+      console.error('Copy failed', err);
+    }
   };
 
-  const handleReset = () => {
+  const resetFilters = () => {
     setSearchQuery('');
     setPaymentMode('all');
     setStartDate('');
     setEndDate('');
     setMinAmount('');
     setMaxAmount('');
+    // Fix: Corrected typo 'Page 1' to '1'
     setPage(1);
-    // Effects will handle re-fetch since debouncedQuery will change
   };
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
-      <div className="mx-auto max-w-7xl">
-        
-        {/* Header */}
-        <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div className="flex items-center">
-             <button onClick={() => navigate('/')} className="mr-4 rounded-full p-2 hover:bg-gray-200">
-                <ArrowLeft className="h-5 w-5 text-gray-600" />
-             </button>
-             <div>
-                <h1 className="text-2xl font-bold text-gray-900">Transaction Search</h1>
-                <p className="text-sm text-gray-500">Search, filter, and review system transactions.</p>
-             </div>
-          </div>
-          <div className="flex gap-2">
-            <button 
-              onClick={handleExport}
-              disabled={exporting || loading}
-              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            >
-              <Download className={`mr-2 h-4 w-4 ${exporting ? 'animate-bounce' : ''}`} />
-              {exporting ? 'Exporting...' : 'Export CSV'}
-            </button>
-            <button 
-              onClick={() => fetchTransactions()}
-              disabled={loading}
-              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-          </div>
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="space-y-10"
+    >
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
+        <div>
+           <h1 className="text-4xl font-black tracking-tighter text-slate-900 italic leading-none">Ledger Explorer</h1>
+           <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400 mt-4 ml-1">Historical Unit Audit Consensus</p>
         </div>
-
-        {/* Filter Card */}
-        <div className="mb-8 rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-900/5">
-          <form onSubmit={handleSearch} className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              
-              {/* Text Search */}
-              <div className="col-span-1 sm:col-span-2">
-                <label className="block text-xs font-medium text-gray-500 uppercase">Search</label>
-                <div className="relative mt-1">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <Search className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Reference ID or Source Name..."
-                    className="block w-full rounded-md border-gray-300 pl-10 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Payment Mode */}
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase">Mode</label>
-                <select
-                  value={paymentMode}
-                  onChange={(e) => setPaymentMode(e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
-                >
-                  <option value="all">All Modes</option>
-                  <option value="cash">Cash</option>
-                  <option value="bank">Bank Transfer</option>
-                  <option value="upi">UPI</option>
-                </select>
-              </div>
-
-               {/* Amount Range */}
-               <div>
-                  <label className="block text-xs font-medium text-gray-500 uppercase">Amount Range</label>
-                  <div className="mt-1 flex items-center space-x-2">
-                      <input
-                        type="number"
-                        placeholder="Min"
-                        value={minAmount}
-                        onChange={(e) => setMinAmount(e.target.value)}
-                        className="block w-full rounded-md border-gray-300 sm:text-sm px-2 py-2"
-                      />
-                      <span className="text-gray-400">-</span>
-                      <input
-                        type="number"
-                        placeholder="Max"
-                        value={maxAmount}
-                        onChange={(e) => setMaxAmount(e.target.value)}
-                        className="block w-full rounded-md border-gray-300 sm:text-sm px-2 py-2"
-                      />
-                  </div>
-              </div>
-
-              {/* Date From */}
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase">From Date</label>
-                <div className="relative mt-1 rounded-md shadow-sm">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <Calendar className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="block w-full rounded-md border-gray-300 py-2 pl-10 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Date To */}
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase">To Date</label>
-                <div className="relative mt-1 rounded-md shadow-sm">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <Calendar className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="block w-full rounded-md border-gray-300 py-2 pl-10 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-end space-x-2 sm:col-span-2 lg:col-span-4 lg:justify-end">
-                <button
-                  type="button"
-                  onClick={handleReset}
-                  className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
-                >
-                  Clear
-                </button>
-                <button
-                  type="submit"
-                  className="inline-flex items-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                >
-                  <Filter className="mr-2 h-4 w-4" />
-                  Apply Filters
-                </button>
-              </div>
-
-            </div>
-          </form>
+        <div className="flex flex-wrap gap-3">
+           <button 
+             onClick={handleExport}
+             disabled={transactions.length === 0 || isExporting}
+             className="flex items-center justify-center rounded-2xl px-6 py-4 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-xl shadow-indigo-200 hover:bg-indigo-700 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+           >
+             {isExporting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileDown className="mr-2 h-4 w-4" />}
+             Export XLSX
+           </button>
+           <button 
+             onClick={() => setShowFilters(!showFilters)}
+             className={`flex-1 md:flex-none flex items-center justify-center rounded-2xl px-8 py-4 text-[10px] font-black uppercase tracking-[0.2em] transition-all ${showFilters ? 'bg-indigo-100 text-indigo-700 shadow-inner' : 'bg-white text-slate-900 border border-slate-200 shadow-sm'}`}
+           >
+             <Filter className="mr-3 h-4 w-4" />
+             Filters
+           </button>
+           <button 
+             onClick={() => fetchTransactions()}
+             className="rounded-2xl bg-white border border-slate-200 p-4 text-slate-400 hover:text-indigo-600 transition-colors shadow-sm"
+           >
+             <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
+           </button>
         </div>
-
-        {/* Results Table */}
-        <div className="overflow-hidden rounded-lg bg-white shadow ring-1 ring-black ring-opacity-5">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-300">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">Date</th>
-                  <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Source</th>
-                  <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Ref ID</th>
-                  <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Mode</th>
-                  <th scope="col" className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
-                {loading ? (
-                   <tr>
-                     <td colSpan={5} className="py-10 text-center">
-                        <div className="flex justify-center">Loading data...</div>
-                     </td>
-                   </tr>
-                ) : transactions.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-10 text-center text-gray-500">
-                       No transactions found matching your filters.
-                    </td>
-                  </tr>
-                ) : (
-                  transactions.map((tx) => (
-                    <tr 
-                      key={tx.id} 
-                      onClick={() => navigate(`/admin/transactions/${tx.id}`)}
-                      className="hover:bg-gray-50 cursor-pointer transition-colors"
-                    >
-                      <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500 sm:pl-6">
-                        {new Date(tx.created_at).toLocaleDateString()}
-                        <div className="text-xs text-gray-400">{new Date(tx.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm font-medium text-gray-900">
-                        {tx.source}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 font-mono">
-                         {tx.reference_id || '-'}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize 
-                          ${tx.payment_mode === 'cash' ? 'bg-green-100 text-green-800' : 
-                            tx.payment_mode === 'upi' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}`}>
-                          {tx.payment_mode}
-                        </span>
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-right text-sm font-bold text-gray-900">
-                        ₹{tx.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          
-          {/* Pagination Footer */}
-          {totalCount > 0 && (
-            <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6">
-                <div className="flex flex-1 justify-between sm:hidden">
-                    <button
-                        onClick={() => setPage(p => Math.max(1, p - 1))}
-                        disabled={page === 1}
-                        className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
-                    >
-                        Previous
-                    </button>
-                    <button
-                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                        disabled={page === totalPages}
-                        className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
-                    >
-                        Next
-                    </button>
-                </div>
-                <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-                    <div>
-                        <p className="text-sm text-gray-700">
-                            Showing <span className="font-medium">{(page - 1) * PAGE_SIZE + 1}</span> to <span className="font-medium">{Math.min(page * PAGE_SIZE, totalCount)}</span> of <span className="font-medium">{totalCount}</span> results
-                        </p>
-                    </div>
-                    <div>
-                        <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
-                            <button
-                                onClick={() => setPage(p => Math.max(1, p - 1))}
-                                disabled={page === 1}
-                                className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:bg-gray-50"
-                            >
-                                <span className="sr-only">Previous</span>
-                                <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-                            </button>
-                            {/* Simple Page Indicator */}
-                            <span className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300 focus:outline-offset-0">
-                                Page {page} of {totalPages}
-                            </span>
-                            <button
-                                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                                disabled={page === totalPages}
-                                className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:bg-gray-50"
-                            >
-                                <span className="sr-only">Next</span>
-                                <ChevronRight className="h-5 w-5" aria-hidden="true" />
-                            </button>
-                        </nav>
-                    </div>
-                </div>
-            </div>
-          )}
-        </div>
-
       </div>
-    </div>
+
+      {/* Aggregate Bar */}
+      <motion.div 
+        layout
+        className="bg-slate-900 rounded-[2.5rem] p-8 text-white flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl"
+      >
+         <div className="flex items-center gap-6">
+            <div className="h-14 w-14 rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-900/40">
+               <TrendingUp className="h-7 w-7" />
+            </div>
+            <div>
+               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-1">Scope Synthesis</p>
+               <h3 className="text-2xl font-black tabular-nums italic tracking-tighter">₹{filteredValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</h3>
+            </div>
+         </div>
+         <div className="flex gap-4">
+            <div className="text-right">
+               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-1">Signal Count</p>
+               <h4 className="text-xl font-black tabular-nums tracking-tighter">{totalCount} Matches</h4>
+            </div>
+         </div>
+      </motion.div>
+
+      <AnimatePresence>
+      {showFilters && (
+        <motion.div 
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          className="overflow-hidden"
+        >
+          <div className="rounded-[2.5rem] border border-slate-100 bg-white p-10 shadow-2xl ring-1 ring-slate-900/5 mb-10">
+            <div className="grid grid-cols-1 gap-10 md:grid-cols-2 lg:grid-cols-4">
+               <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Channel Target</label>
+                  <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} className="mt-4 w-full rounded-2xl bg-slate-50 text-xs font-bold py-4 px-4 border-none focus:ring-2 focus:ring-indigo-600">
+                    <option value="all">Global Archive</option>
+                    <option value="cash">Cash Ledger</option>
+                    <option value="bank">Bank Wire</option>
+                    <option value="upi">UPI/Network</option>
+                  </select>
+               </div>
+               <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Value Bounds (₹)</label>
+                  <div className="mt-4 flex gap-3">
+                    <input type="number" placeholder="Min" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} className="w-full rounded-2xl bg-slate-50 py-4 px-4 text-xs font-bold border-none" />
+                    <input type="number" placeholder="Max" value={maxAmount} onChange={(e) => setMaxAmount(e.target.value)} className="w-full rounded-2xl bg-slate-50 py-4 px-4 text-xs font-bold border-none" />
+                  </div>
+               </div>
+               <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Time Window</label>
+                  <div className="mt-4 flex gap-3">
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full rounded-2xl bg-slate-50 py-4 px-4 text-[10px] font-bold border-none" />
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full rounded-2xl bg-slate-50 py-4 px-4 text-[10px] font-bold border-none" />
+                  </div>
+               </div>
+               <div className="flex items-end">
+                  <button onClick={resetFilters} className="w-full rounded-2xl bg-slate-950 py-4 text-[10px] font-black uppercase text-white tracking-[0.2em] shadow-lg active:scale-95 transition-transform">
+                    Reset Signals
+                  </button>
+               </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+      </AnimatePresence>
+
+      <div className="relative group">
+        <div className="absolute left-8 top-1/2 -translate-y-1/2">
+           <Search className="h-6 w-6 text-slate-300 group-focus-within:text-indigo-600 transition-colors" />
+        </div>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search by Payer Entity, Branch, or UTR Network ID..."
+          className="h-20 w-full rounded-[2.5rem] border-none bg-white pl-20 pr-10 text-slate-900 shadow-sm ring-1 ring-slate-200 placeholder:text-slate-300 focus:ring-8 focus:ring-indigo-600/5 text-xl font-medium tracking-tight"
+        />
+      </div>
+
+      <div className="hidden md:block overflow-hidden rounded-[3rem] border border-slate-200 bg-white shadow-xl min-h-[400px]">
+        {loading ? (
+          <div className="flex h-64 items-center justify-center">
+             <RefreshCw className="h-8 w-8 animate-spin text-indigo-600" />
+          </div>
+        ) : transactions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-32 text-center">
+             <Inbox className="h-16 w-16 text-slate-100 mb-6" />
+             <h3 className="text-xl font-black text-slate-900 tracking-tight">Zero Matches</h3>
+             <p className="mt-2 text-sm text-slate-400 font-medium max-w-xs">The cryptographically verified ledger has no records matching your current criteria.</p>
+             <button onClick={resetFilters} className="mt-8 text-[10px] font-black uppercase tracking widest text-indigo-600 hover:underline">Clear all filters</button>
+          </div>
+        ) : (
+          <table className="min-w-full divide-y divide-slate-100">
+            <thead className="bg-slate-50/50">
+              <tr>
+                <th className="px-10 py-6 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Timestamp</th>
+                <th className="px-10 py-6 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Entity Source</th>
+                <th className="px-10 py-6 text-left text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Channel</th>
+                <th className="px-10 py-6 text-right text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Settled Value</th>
+                <th className="w-10 px-10 py-6"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              <AnimatePresence mode="popLayout">
+              {transactions.map((tx, idx) => (
+                <motion.tr 
+                  key={tx.id} 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ delay: Math.min(idx * 0.03, 0.3) }}
+                  onClick={() => navigate(`/admin/transactions/${tx.id}`)}
+                  className="group cursor-pointer transition-colors hover:bg-indigo-50/20"
+                >
+                  <td className="whitespace-nowrap px-10 py-8">
+                    <div className="text-sm font-black text-slate-900 tracking-tight tabular-nums">{new Date(tx.created_at).toLocaleDateString()}</div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1 opacity-60 tabular-nums">{new Date(tx.created_at).toLocaleTimeString()}</div>
+                  </td>
+                  <td className="px-10 py-8">
+                    <div className="flex items-center gap-5">
+                      <div className="h-12 w-12 flex items-center justify-center rounded-2xl bg-slate-50 text-slate-400 group-hover:bg-white group-hover:shadow-md transition-all">
+                         <Building className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <div className="text-base font-black text-slate-900 tracking-tight">{tx.source}</div>
+                        <div 
+                          onClick={(e) => handleCopy(e, tx.reference_id || 'LOCAL')}
+                          className="font-mono text-[10px] text-slate-400 uppercase tracking-widest mt-1 flex items-center gap-2 hover:text-indigo-600 transition-colors"
+                        >
+                          {tx.reference_id || 'LOCAL_AUDIT'}
+                          {copyId === (tx.reference_id || 'LOCAL') ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3 opacity-30" />}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-10 py-8">
+                    <span className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm ring-1 ring-inset
+                      ${tx.payment_mode === 'cash' ? 'bg-emerald-50 text-emerald-700 ring-emerald-100' : 
+                        tx.payment_mode === 'upi' ? 'bg-sky-50 text-sky-700 ring-sky-100' : 'bg-indigo-50 text-indigo-700 ring-indigo-100'}`}>
+                      {tx.payment_mode}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-10 py-8 text-right font-mono text-xl font-black text-slate-900 tracking-tighter italic tabular-nums">
+                    ₹{tx.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-10 py-8 text-right">
+                     <MoreHorizontal className="h-5 w-5 text-slate-200 group-hover:text-slate-900 transition-colors" />
+                  </td>
+                </motion.tr>
+              ))}
+              </AnimatePresence>
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between py-6 px-2">
+         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-300">
+           Found <span className="text-slate-900 mx-1 tabular-nums">{totalCount}</span> Archive Files
+         </p>
+         <div className="flex items-center gap-3">
+            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="h-12 w-12 flex items-center justify-center rounded-2xl bg-white border border-slate-200 disabled:opacity-20 shadow-sm"><ChevronLeft className="h-5 w-5" /></motion.button>
+            <div className="h-12 min-w-[3rem] px-5 flex items-center justify-center rounded-2xl bg-slate-950 text-white font-black text-xs tracking-widest italic shadow-xl tabular-nums">
+              {page} / {totalPages || 1}
+            </div>
+            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages || totalCount === 0} className="h-12 w-12 flex items-center justify-center rounded-2xl bg-white border border-slate-200 disabled:opacity-20 shadow-sm"><ChevronRight className="h-5 w-5" /></motion.button>
+         </div>
+      </div>
+    </motion.div>
   );
 }

@@ -1,14 +1,14 @@
-
 import { createClient } from '@supabase/supabase-js';
 
 // Helper to safely access process.env or return fallback
 const getEnv = (key: string, fallback: string) => {
   try {
-    if (typeof process !== 'undefined' && process.env && process.env[key]) {
-      return process.env[key];
+    const env = (globalThis as any).process?.env || {};
+    if (env[key]) {
+      return env[key];
     }
   } catch (e) {
-    // process is not defined
+    // Silently handle
   }
   return fallback;
 };

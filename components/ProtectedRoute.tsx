@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Loader2, ShieldAlert, ArrowLeft, Home } from 'lucide-react';
 
-type AppRole = 'super_admin' | 'admin' | 'user';
+export type AppRole = 'super_admin' | 'admin' | 'user';
 
 interface ProtectedRouteProps {
   allowedRoles?: AppRole[];
@@ -15,13 +15,13 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles, ch
   const location = useLocation();
   const navigate = useNavigate();
 
-  // 1. Loading state
+  // 1. Loading state: check if we are still verifying identity or role
   if (loading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-2">
           <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-          <span className="text-sm font-medium text-gray-500">Verifying access...</span>
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Verifying Access Protocol...</span>
         </div>
       </div>
     );
@@ -32,7 +32,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles, ch
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // 3. Authenticated but Role not yet loaded (Safety guard)
+  // 3. Authenticated but Role not yet available (Security guard)
   if (!role) {
      return (
       <div className="flex h-screen w-full items-center justify-center bg-gray-50">
@@ -41,37 +41,41 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles, ch
     );
   }
 
-  // 4. Role mismatch: Show Access Denied
-  // The 'as AppRole' cast is safe here because we checked !role above
+  // 4. Role mismatch: Show Access Denied UI
   if (allowedRoles && !allowedRoles.includes(role as AppRole)) {
     return (
         <div className="flex h-screen flex-col items-center justify-center bg-gray-50 p-4 text-center">
-            <div className="rounded-full bg-red-100 p-3">
-                <ShieldAlert className="h-10 w-10 text-red-600" />
+            <div className="rounded-[2rem] bg-rose-50 p-6 shadow-inner ring-1 ring-rose-100">
+                <ShieldAlert className="h-12 w-12 text-rose-600" />
             </div>
-            <h1 className="mt-4 text-2xl font-bold text-gray-900">Access Denied</h1>
-            <p className="mt-2 text-gray-600">
-                You do not have permission to view this page.
+            <h1 className="mt-8 text-3xl font-black italic tracking-tighter text-slate-900">Access Denied</h1>
+            <p className="mt-4 text-slate-500 font-medium max-w-xs">
+                Your credentials lack the authorization required for this terminal node.
             </p>
-            <div className="mt-4 rounded-md bg-gray-100 px-4 py-2 text-sm text-gray-700">
-              Required: <span className="font-semibold text-gray-900">{allowedRoles.join(', ')}</span>
-              <br/>
-              Current: <span className="font-semibold text-indigo-600">{role}</span>
+            <div className="mt-10 rounded-3xl bg-white p-8 shadow-xl ring-1 ring-slate-200 text-left w-full max-w-sm">
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Required Clearance</span>
+                <span className="text-[10px] font-black text-slate-900 bg-slate-100 px-3 py-1 rounded-full">{allowedRoles.join(', ').toUpperCase()}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current Clearance</span>
+                <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{role.toUpperCase()}</span>
+              </div>
             </div>
-            <div className="mt-8 flex justify-center gap-3">
+            <div className="mt-10 flex justify-center gap-4 w-full max-w-sm">
               <button 
                   onClick={() => navigate(-1)}
-                  className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                  className="flex-1 rounded-2xl bg-white px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50"
               >
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Go Back
+                  <ArrowLeft className="mr-2 h-4 w-4 inline" />
+                  Back
               </button>
               <button 
                   onClick={() => navigate('/')}
-                  className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                  className="flex-1 rounded-2xl bg-indigo-600 px-6 py-4 text-[10px] font-black uppercase tracking-widest text-white shadow-xl shadow-indigo-100 hover:bg-indigo-700"
               >
-                  <Home className="mr-2 h-4 w-4" />
-                  Dashboard
+                  <Home className="mr-2 h-4 w-4 inline" />
+                  Pulse
               </button>
             </div>
         </div>

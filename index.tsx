@@ -1,15 +1,18 @@
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { Layout } from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ResetPassword from './pages/ResetPassword';
 import NewTransaction from './pages/NewTransaction';
 import AdminSearch from './pages/AdminSearch';
 import TransactionDetail from './pages/TransactionDetail';
-import './index.css'; // Assuming Tailwind directives are here or handled by the environment
+import AIAudit from './pages/AIAudit';
+import ScanReceipt from './pages/ScanReceipt';
 
 const App = () => {
   return (
@@ -20,25 +23,20 @@ const App = () => {
           <Route path="/login" element={<Login />} />
           <Route path="/reset-password" element={<ResetPassword />} />
 
-          {/* Protected Routes */}
-          {/* Default dashboard accessible by all authenticated roles */}
+          {/* Protected Routes Wrapper */}
           <Route element={<ProtectedRoute />}>
-             <Route path="/" element={<Dashboard />} />
+             <Route path="/" element={<Layout><Dashboard /></Layout>} />
           </Route>
 
-          {/* Admin & Super Admin Routes */}
+          {/* Admin & Super Admin Specific Routes */}
           <Route element={<ProtectedRoute allowedRoles={['admin', 'super_admin']} />}>
-             <Route path="/transactions/new" element={<NewTransaction />} />
-             <Route path="/admin/search" element={<AdminSearch />} />
-             <Route path="/admin/transactions/:id" element={<TransactionDetail />} />
+             <Route path="/transactions/new" element={<Layout><NewTransaction /></Layout>} />
+             <Route path="/admin/search" element={<Layout><AdminSearch /></Layout>} />
+             <Route path="/admin/transactions/:id" element={<Layout><TransactionDetail /></Layout>} />
+             <Route path="/admin/scan" element={<Layout><ScanReceipt /></Layout>} />
+             <Route path="/intelligence" element={<Layout><AIAudit /></Layout>} />
           </Route>
 
-          {/* Example of Role Specific Route */}
-          <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
-             <Route path="/admin/settings" element={<div>Super Admin Settings</div>} />
-          </Route>
-
-          {/* Catch all redirect to login */}
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>
