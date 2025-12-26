@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
-const GROQ_API_KEY = 'REMOVED_API_KEY';
+const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || import.meta.env.GROQ_API_KEY;
 
 const categories = [
   'food', 'transport', 'shopping', 'entertainment', 'bills', 

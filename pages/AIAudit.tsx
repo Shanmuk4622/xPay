@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { formatCurrency, getCategoryIcon } from '../lib/utils';
 
-const GROQ_API_KEY = 'REMOVED_API_KEY';
+const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || import.meta.env.GROQ_API_KEY;
 
 // Raw transaction from database
 interface RawTransaction {

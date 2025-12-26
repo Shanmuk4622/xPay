@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
         env.VITE_SUPABASE_ANON_KEY || env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdqcHNranR0YnZlYmFqZ2V2c21rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2NDk2NDEsImV4cCI6MjA4MjIyNTY0MX0.pq79JM9tznS-fzNzEEamovS5UbXomDEGvMklnlJdyyE'
       ),
       'import.meta.env.VITE_GROQ_API_KEY': JSON.stringify(
-        env.VITE_GROQ_API_KEY || env.GROQ_API_KEY || 'REMOVED_API_KEY'
+        env.VITE_GROQ_API_KEY || env.GROQ_API_KEY
       ),
     },
     resolve: {
