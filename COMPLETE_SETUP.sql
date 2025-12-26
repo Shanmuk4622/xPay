@@ -84,26 +84,12 @@ CREATE TRIGGER on_auth_user_created
 CREATE TABLE public.transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   amount NUMERIC(15, 2) NOT NULL,
-<<<<<<< HEAD
-  payment_mode TEXT NOT NULL CHECK (payment_mode IN ('cash', 'bank', 'upi', 'card')),
-  source TEXT NOT NULL,
-  reference_id TEXT,
-  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  branch TEXT,
-  status TEXT DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
-  secure_id TEXT,
-  signature TEXT,
-  audit_tag TEXT,
-  tags TEXT[],
-=======
-  type TEXT NOT NULL CHECK (type IN ('cash', 'bank', 'upi', 'card')),
-  description TEXT,
+  payment_mode TEXT DEFAULT 'cash',
+  source TEXT,
   reference_id TEXT,
   user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   branch TEXT,
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
->>>>>>> cc9c060f754b6fed0940fb82a67e636da0aafebb
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
@@ -128,54 +114,31 @@ CREATE POLICY "transactions_insert_own"
   ON public.transactions
   FOR INSERT
   TO authenticated
-<<<<<<< HEAD
-  WITH CHECK (auth.uid() = created_by);
-=======
   WITH CHECK (auth.uid() = user_id);
->>>>>>> cc9c060f754b6fed0940fb82a67e636da0aafebb
 
 -- Allow users to update their own transactions
 CREATE POLICY "transactions_update_own"
   ON public.transactions
   FOR UPDATE
   TO authenticated
-<<<<<<< HEAD
-  USING (auth.uid() = created_by)
-  WITH CHECK (auth.uid() = created_by);
-=======
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
->>>>>>> cc9c060f754b6fed0940fb82a67e636da0aafebb
 
 -- Allow users to delete their own transactions
 CREATE POLICY "transactions_delete_own"
   ON public.transactions
   FOR DELETE
   TO authenticated
-<<<<<<< HEAD
-  USING (auth.uid() = created_by);
-=======
   USING (auth.uid() = user_id);
->>>>>>> cc9c060f754b6fed0940fb82a67e636da0aafebb
 
 -- STEP 11: CREATE INDEXES FOR PERFORMANCE
 -- ============================================
 CREATE INDEX idx_users_email ON public.users(email);
 CREATE INDEX idx_users_role ON public.users(role);
-<<<<<<< HEAD
-CREATE INDEX idx_transactions_created_by ON public.transactions(created_by);
 CREATE INDEX idx_transactions_user_id ON public.transactions(user_id);
 CREATE INDEX idx_transactions_created_at ON public.transactions(created_at DESC);
-CREATE INDEX idx_transactions_payment_mode ON public.transactions(payment_mode);
 CREATE INDEX idx_transactions_source ON public.transactions(source);
 CREATE INDEX idx_transactions_status ON public.transactions(status);
-CREATE INDEX idx_transactions_secure_id ON public.transactions(secure_id);
-=======
-CREATE INDEX idx_transactions_user_id ON public.transactions(user_id);
-CREATE INDEX idx_transactions_created_at ON public.transactions(created_at DESC);
-CREATE INDEX idx_transactions_type ON public.transactions(type);
-CREATE INDEX idx_transactions_status ON public.transactions(status);
->>>>>>> cc9c060f754b6fed0940fb82a67e636da0aafebb
 
 -- STEP 12: INSERT YOUR ADMIN USER
 -- ============================================
