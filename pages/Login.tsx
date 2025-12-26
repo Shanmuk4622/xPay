@@ -1,184 +1,191 @@
 import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useNavigate } from 'react-router-dom';
-import { Lock, Mail, Loader2, AlertCircle, UserPlus, CheckCircle, Key, ArrowLeft, Wallet } from 'lucide-react';
+import { useToast } from '../context/ToastContext';
+import { validateEmail, validatePassword } from '../lib/utils';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSignUp, setIsSignUp] = useState(false);
-  const [isForgotPassword, setIsForgotPassword] = useState(false);
-  
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const navigate = useNavigate();
+  const { showToast } = useToast();
 
-  const handleAuth = async (e: React.FormEvent) => {
+  const validate = (): boolean => {
+    const newErrors: { email?: string; password?: string } = {};
+    
+    if (!email) {
+      newErrors.email = 'Email is required';
+    } else if (!validateEmail(email)) {
+      newErrors.email = 'Please enter a valid email';
+    }
+
+    if (!password) {
+      newErrors.password = 'Password is required';
+    } else {
+      const { valid, message } = validatePassword(password);
+      if (!valid) newErrors.password = message;
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validate()) return;
+
     setLoading(true);
-    setError(null);
-    setSuccessMsg(null);
 
     try {
-      if (isForgotPassword) {
-        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}/reset-password`,
+      if (isSignUp) {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: window.location.origin + '/dashboard' },
         });
-        if (resetError) throw resetError;
-        setSuccessMsg('Reset instructions dispatched to your inbox.');
-      } else if (isSignUp) {
-        const { data, error: authError } = await supabase.auth.signUp({ email, password });
-        if (authError) throw authError;
+        if (error) throw error;
+        
+        // Check if user needs email confirmation
         if (data.user && !data.session) {
-            setSuccessMsg('Verification email sent! Please check your inbox.');
-            setIsSignUp(false);
-            setPassword('');
-        } else if (data.session) navigate('/');
+          showToast('success', 'Account created! Check your email to verify.');
+        } else if (data.session) {
+          showToast('success', 'Account created! Redirecting...');
+          navigate('/dashboard');
+        }
       } else {
-        const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-        if (authError) throw authError;
-        navigate('/');
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        if (data.session) {
+          showToast('success', 'Welcome back!');
+          navigate('/dashboard');
+        }
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication failed.');
+      console.error('Auth error:', err);
+      // Better error messages
+      let message = 'Authentication failed';
+      if (err.message?.includes('Invalid login')) {
+        message = 'Invalid email or password';
+      } else if (err.message?.includes('Email not confirmed')) {
+        message = 'Please verify your email before signing in';
+      } else if (err.message?.includes('rate limit')) {
+        message = 'Too many attempts. Please try again later';
+      } else if (err.message) {
+        message = err.message;
+      }
+      showToast('error', message);
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleMode = () => {
-      setIsSignUp(!isSignUp);
-      setIsForgotPassword(false);
-      setError(null);
-      setSuccessMsg(null);
-      setEmail('');
-      setPassword('');
-  };
-
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      {/* Left Panel: Visual/Branding */}
-      <div className="relative hidden flex-col justify-between bg-indigo-600 p-12 lg:flex overflow-hidden">
-        {/* Abstract Background Element */}
-        <div className="absolute -right-20 -top-20 h-96 w-96 rounded-full bg-indigo-500/50 blur-3xl" />
-        <div className="absolute -bottom-20 -left-20 h-96 w-96 rounded-full bg-indigo-800/50 blur-3xl" />
-        
-        <div className="relative z-10 flex items-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-indigo-600 shadow-xl">
-            <Wallet className="h-6 w-6" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 px-4 py-8">
+      <div className="w-full max-w-md animate-fade-in">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl shadow-2xl shadow-blue-500/30 mb-5">
+            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
           </div>
-          <span className="ml-3 text-2xl font-black tracking-tighter text-white">FinTrack<span className="text-indigo-300">Pro</span></span>
+          <h1 className="text-3xl font-bold text-slate-900">xPay</h1>
+          <p className="text-slate-500 mt-2">Smart Personal Finance Tracker</p>
         </div>
 
-        <div className="relative z-10 max-w-md">
-           <h1 className="text-5xl font-black leading-tight text-white italic">Audit Everything. Control Everywhere.</h1>
-           <p className="mt-6 text-lg font-medium text-indigo-100">The world's most intuitive financial transaction engine for modern branches.</p>
-           <div className="mt-10 flex items-center gap-4">
-              <div className="flex -space-x-3">
-                 {[1,2,3,4].map(i => <div key={i} className="h-10 w-10 rounded-full border-2 border-indigo-600 bg-indigo-400 shadow-sm ring-1 ring-white/10" />)}
-              </div>
-              <span className="text-sm font-bold text-indigo-200 uppercase tracking-widest">Trusted by 500+ Branches</span>
-           </div>
-        </div>
-
-        <div className="relative z-10 text-xs font-medium text-indigo-300">
-           &copy; 2025 FinTrack Pro Systems. All Rights Reserved.
-        </div>
-      </div>
-
-      {/* Right Panel: Auth Form */}
-      <div className="flex items-center justify-center bg-white p-8 sm:p-12">
-        <div className="w-full max-w-md">
-          <header className="mb-10 lg:hidden">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg">
-                <Wallet className="h-6 w-6" />
-              </div>
-              <h2 className="mt-4 text-2xl font-black text-slate-900 uppercase tracking-tighter">FinTrack Pro</h2>
-          </header>
-
-          <h2 className="text-3xl font-black tracking-tight text-slate-900">
-            {isForgotPassword ? 'Rescue Password' : isSignUp ? 'Onboard Unit' : 'Terminal Access'}
+        {/* Card */}
+        <div className="bg-white rounded-3xl shadow-2xl shadow-slate-200/50 p-8 border border-slate-100">
+          <h2 className="text-xl font-semibold text-slate-900 mb-1">
+            {isSignUp ? 'Create your account' : 'Welcome back'}
           </h2>
-          <p className="mt-2 text-sm font-medium text-slate-400">
-            {isForgotPassword ? 'Enter verified email for recovery.' : 'Please provide your security credentials.'}
+          <p className="text-slate-500 text-sm mb-6">
+            {isSignUp ? 'Start tracking your finances today' : 'Sign in to continue to your dashboard'}
           </p>
 
-          <form onSubmit={handleAuth} className="mt-10 space-y-5">
-            {successMsg && (
-                <div className="flex items-center gap-3 rounded-2xl bg-emerald-50 p-4 text-xs font-bold text-emerald-700 ring-1 ring-emerald-100 animate-in fade-in duration-300">
-                    <CheckCircle className="h-4 w-4 shrink-0" />
-                    <span>{successMsg}</span>
-                </div>
-            )}
-            {error && (
-              <div className="flex items-center gap-3 rounded-2xl bg-rose-50 p-4 text-xs font-bold text-rose-600 ring-1 ring-rose-100">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Work Email</label>
-              <div className="relative">
-                <Mail className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-300" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-14 w-full rounded-2xl border-none bg-slate-50 pl-12 pr-4 text-sm font-bold text-slate-900 shadow-inner ring-1 ring-slate-200 placeholder:text-slate-300 focus:ring-2 focus:ring-indigo-600"
-                  placeholder="admin@branch.com"
-                />
-              </div>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+                Email address
+              </label>
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
+                }}
+                placeholder="you@example.com"
+                autoComplete="email"
+                className={`w-full px-4 py-3.5 bg-slate-50 border rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+                  errors.email ? 'border-red-300 bg-red-50' : 'border-slate-200'
+                }`}
+              />
+              {errors.email && <p className="mt-1.5 text-sm text-red-500">{errors.email}</p>}
             </div>
 
-            {!isForgotPassword && (
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Secret Key</label>
-                  <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-300" />
-                      <input
-                        type="password"
-                        required
-                        minLength={6}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="h-14 w-full rounded-2xl border-none bg-slate-50 pl-12 pr-4 text-sm font-bold text-slate-900 shadow-inner ring-1 ring-slate-200 placeholder:text-slate-300 focus:ring-2 focus:ring-indigo-600"
-                        placeholder="••••••••"
-                      />
-                  </div>
-                </div>
-            )}
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-2">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
+                }}
+                placeholder="••••••••"
+                autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                className={`w-full px-4 py-3.5 bg-slate-50 border rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+                  errors.password ? 'border-red-300 bg-red-50' : 'border-slate-200'
+                }`}
+              />
+              {errors.password && <p className="mt-1.5 text-sm text-red-500">{errors.password}</p>}
+            </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="flex h-14 w-full items-center justify-center rounded-2xl bg-indigo-600 text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-indigo-100 transition-all hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50"
+              className="w-full py-3.5 px-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold rounded-xl shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 disabled:opacity-60 disabled:cursor-not-allowed transition-all btn-press"
             >
-              {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : isForgotPassword ? 'Request Reset' : isSignUp ? 'Initialize' : 'Authorize'}
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  {isSignUp ? 'Creating account...' : 'Signing in...'}
+                </span>
+              ) : (
+                isSignUp ? 'Create account' : 'Sign in'
+              )}
             </button>
           </form>
 
-          <div className="mt-8 text-center">
-            {isForgotPassword ? (
-                <button onClick={() => setIsForgotPassword(false)} className="inline-flex items-center text-xs font-black uppercase tracking-widest text-slate-400 hover:text-indigo-600 transition-colors">
-                    <ArrowLeft className="mr-2 h-3 w-3" /> Back to Authorization
-                </button>
-            ) : (
-                <div className="space-y-4">
-                  <button onClick={toggleMode} className="text-xs font-black uppercase tracking-widest text-slate-400 hover:text-indigo-600 transition-colors">
-                      {isSignUp ? 'Existing Terminal User? Sign In' : 'New Branch Setup? Register'}
-                  </button>
-                  {!isSignUp && (
-                    <div>
-                      <button onClick={() => setIsForgotPassword(true)} className="text-[10px] font-bold uppercase tracking-widest text-slate-300 hover:text-rose-400 transition-colors">Forgot Access Key?</button>
-                    </div>
-                  )}
-                </div>
+          <div className="mt-6 space-y-3 text-center">
+            <button
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setErrors({});
+              }}
+              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+            </button>
+
+            {!isSignUp && (
+              <Link to="/reset-password" className="block text-sm text-slate-500 hover:text-slate-700">
+                Forgot your password?
+              </Link>
             )}
           </div>
         </div>
+
+        <p className="text-center text-sm text-slate-400 mt-6">
+          🔒 Secure & encrypted • Your data stays private
+        </p>
       </div>
     </div>
   );

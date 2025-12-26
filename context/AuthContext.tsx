@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, PropsWithChildren } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
@@ -14,108 +14,112 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: PropsWithChildren<{}>) {
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
+
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export function AuthProvider({ children }: AuthProviderProps) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Fetch role in background - don't block auth
   const fetchUserRole = async (userId: string) => {
     try {
-      // Protect against network stalls by racing the DB call with a timeout
-      const dbCall = supabase.from('users').select('role').eq('id', userId).maybeSingle();
-      const timeout = new Promise<any>((resolve) => setTimeout(() => resolve({ timeout: true }), 5000));
-      const result: any = await Promise.race([dbCall, timeout]);
+      const { data, error } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle();
 
-      if (result && result.timeout) {
-        console.warn('Role fetch timed out — defaulting to user');
-        return 'user';
+      if (!error && data?.role) {
+        setRole(data.role as AppRole);
+      } else {
+        setRole('user');
       }
-
-      const { data, error } = result;
-      if (error) {
-        console.error('Role fetch error:', error);
-        return 'user';
-      }
-      return (data?.role as AppRole) || 'user';
-    } catch (err) {
-      console.error('Unexpected error fetching role:', err);
-      return 'user';
+    } catch {
+      setRole('user');
     }
+  };
+
+  const signOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error('Sign out error:', e);
+    }
+    setSession(null);
+    setUser(null);
+    setRole(null);
   };
 
   useEffect(() => {
     let mounted = true;
 
-    const initializeAuth = async () => {
+    const initialize = async () => {
       try {
-        const { data: { session: initialSession } } = await supabase.auth.getSession();
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        
         if (!mounted) return;
 
-        if (initialSession?.user) {
-          // Fetch role but guard with timeout inside fetchUserRole
-          const userRole = await fetchUserRole(initialSession.user.id);
-          if (mounted) {
-            setSession(initialSession);
-            setUser(initialSession.user);
-            setRole(userRole);
-          }
+        if (currentSession?.user) {
+          setSession(currentSession);
+          setUser(currentSession.user);
+          setLoading(false); // Don't wait for role
+          // Fetch role in background
+          fetchUserRole(currentSession.user.id);
+        } else {
+          setLoading(false);
         }
-      } catch (err) {
-        console.error('Auth initialization failed:', err);
-      } finally {
+      } catch (error) {
+        console.error('Auth initialization error:', error);
         if (mounted) setLoading(false);
       }
     };
 
-    initializeAuth();
+    // Faster failsafe timeout
+    const timeoutId = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn('Auth timeout - forcing load complete');
+        setLoading(false);
+      }
+    }, 1500);
+
+    initialize();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
       if (!mounted) return;
 
-      if (currentSession?.user) {
-        // If we already have this user and role, don't trigger a full reload
-        if (user?.id === currentSession.user.id && role) {
-          setSession(currentSession);
-          setUser(currentSession.user);
-          return;
-        }
+      console.log('Auth state change:', event);
 
-        setLoading(true);
-        try {
-          const userRole = await fetchUserRole(currentSession.user.id);
-          if (mounted) {
-            setSession(currentSession);
-            setUser(currentSession.user);
-            setRole(userRole);
-          }
-        } catch (err) {
-          console.error('Error fetching role on auth change:', err);
-        } finally {
-          if (mounted) setLoading(false);
-        }
+      if (currentSession?.user) {
+        setSession(currentSession);
+        setUser(currentSession.user);
+        // Fetch role in background
+        fetchUserRole(currentSession.user.id);
       } else {
         setSession(null);
         setUser(null);
         setRole(null);
-        setLoading(false);
       }
+      setLoading(false);
     });
 
     return () => {
       mounted = false;
+      clearTimeout(timeoutId);
       subscription.unsubscribe();
     };
-  }, [user?.id, role]);
-
-  const signOut = async () => {
-    setLoading(true);
-    await supabase.auth.signOut();
-    setRole(null);
-    setSession(null);
-    setUser(null);
-    setLoading(false);
-  };
+  }, []);
 
   return (
     <AuthContext.Provider value={{ session, user, role, loading, signOut }}>
@@ -123,11 +127,3 @@ export function AuthProvider({ children }: PropsWithChildren<{}>) {
     </AuthContext.Provider>
   );
 }
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};

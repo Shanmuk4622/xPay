@@ -1,67 +1,79 @@
-import React from 'react';
+import React, { forwardRef, ComponentProps, ElementType } from 'react';
 
-// AnimatePresence with mode support
-export const AnimatePresence = ({ children, mode }: any) => <>{children}</>;
+type MotionProps = {
+  initial?: any;
+  animate?: any;
+  exit?: any;
+  transition?: any;
+  whileHover?: any;
+  whileTap?: any;
+  whileFocus?: any;
+  whileInView?: any;
+  layoutId?: any;
+  layout?: any;
+  variants?: any;
+};
 
-// Motion props that should be stripped from DOM elements
-const motionProps = [
-  'initial',
-  'animate',
-  'exit',
-  'transition',
-  'whileHover',
-  'whileTap',
-  'whileFocus',
-  'whileDrag',
-  'whileInView',
-  'variants',
-  'layoutId',
-  'layout',
-  'drag',
-  'dragConstraints',
-  'dragElastic',
-  'dragMomentum',
-  'onDragStart',
-  'onDragEnd',
-  'onAnimationStart',
-  'onAnimationComplete',
-];
+function createMotionComponent<T extends ElementType>(tag: T) {
+  return forwardRef<any, ComponentProps<T> & MotionProps>(function MotionComponent(props, ref) {
+    const {
+      initial,
+      animate,
+      exit,
+      transition,
+      whileHover,
+      whileTap,
+      whileFocus,
+      whileInView,
+      layoutId,
+      layout,
+      variants,
+      ...rest
+    } = props;
 
-const create = (Tag: keyof JSX.IntrinsicElements) => 
-  React.forwardRef((props: any, ref: any) => {
-    // Filter out framer-motion specific props
-    const domProps: any = {};
-    Object.keys(props).forEach(key => {
-      if (!motionProps.includes(key)) {
-        domProps[key] = props[key];
-      }
-    });
-    
-    // Add ref if provided
-    if (ref) {
-      domProps.ref = ref;
-    }
-    
-    return React.createElement(Tag, domProps);
+    return React.createElement(tag, { ref, ...rest });
   });
+}
 
 export const motion = {
-  div: create('div'),
-  span: create('span'),
-  section: create('section'),
-  ul: create('ul'),
-  li: create('li'),
-  p: create('p'),
-  img: create('img'),
-  svg: create('svg'),
-  button: create('button'),
-  a: create('a'),
-  form: create('form'),
-  input: create('input'),
-  nav: create('nav'),
-  main: create('main'),
-  header: create('header'),
-  footer: create('footer'),
+  div: createMotionComponent('div'),
+  span: createMotionComponent('span'),
+  button: createMotionComponent('button'),
+  a: createMotionComponent('a'),
+  ul: createMotionComponent('ul'),
+  li: createMotionComponent('li'),
+  nav: createMotionComponent('nav'),
+  header: createMotionComponent('header'),
+  footer: createMotionComponent('footer'),
+  section: createMotionComponent('section'),
+  article: createMotionComponent('article'),
+  aside: createMotionComponent('aside'),
+  main: createMotionComponent('main'),
+  form: createMotionComponent('form'),
+  input: createMotionComponent('input'),
+  textarea: createMotionComponent('textarea'),
+  select: createMotionComponent('select'),
+  label: createMotionComponent('label'),
+  p: createMotionComponent('p'),
+  h1: createMotionComponent('h1'),
+  h2: createMotionComponent('h2'),
+  h3: createMotionComponent('h3'),
+  h4: createMotionComponent('h4'),
+  h5: createMotionComponent('h5'),
+  h6: createMotionComponent('h6'),
+  img: createMotionComponent('img'),
+  svg: createMotionComponent('svg'),
+  path: createMotionComponent('path'),
+  table: createMotionComponent('table'),
+  thead: createMotionComponent('thead'),
+  tbody: createMotionComponent('tbody'),
+  tr: createMotionComponent('tr'),
+  td: createMotionComponent('td'),
+  th: createMotionComponent('th'),
 };
+
+export function AnimatePresence({ children }: { children: React.ReactNode; mode?: string }) {
+  return <>{children}</>;
+}
 
 export default motion;

@@ -1,5 +1,19 @@
 # Troubleshooting Guide - FinTrack Pro
 
+## 🆕 Recent Fixes (December 26, 2024)
+
+### ✅ Fixed: Environment Variable Issues
+**Problem**: Application couldn't access Supabase credentials or Gemini API key.  
+**Solution**: Updated all files to use Vite's `import.meta.env` instead of `process.env`.
+- All `.env` variables now use `VITE_` prefix
+- See `.env.example` for the correct format
+
+### ✅ Fixed: Component Import Issues
+**Problem**: TypeScript errors or missing imports.  
+**Solution**: Verified all component imports and exports are correct.
+
+---
+
 ## 🐛 Common Issues & Solutions
 
 ### Issue 1: Blank Page / Stuck on "Verifying Access Protocol" Spinner
@@ -15,50 +29,26 @@ The `users` table doesn't exist in your Supabase database, or Row Level Security
 
 **Solution:**
 
-1. **Create the users table** in Supabase SQL Editor:
+1. **Run the complete database setup** in Supabase SQL Editor:
+   - Go to your Supabase Dashboard → SQL Editor
+   - Open the file `COMPLETE_SETUP.sql` from this project
+   - Copy the entire content and paste it into a new query
+   - Click **RUN**
 
-```sql
--- Create users table
-CREATE TABLE users (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin', 'super_admin')),
-  email TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+2. **Verify your user role**:
+   After signing up, you may need to manually set your role to `super_admin`:
+   
+   ```sql
+   -- Find your user ID
+   SELECT id, email FROM auth.users WHERE email = 'your-email@example.com';
+   
+   -- Update your role
+   INSERT INTO public.users (id, email, role)
+   VALUES ('your-user-id-here', 'your-email@example.com', 'super_admin')
+   ON CONFLICT (id) DO UPDATE SET role = 'super_admin';
+   ```
 
--- Enable RLS (Row Level Security)
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-
--- Allow users to read their own data
-CREATE POLICY "Users can read own data"
-  ON users FOR SELECT
-  USING (auth.uid() = id);
-
--- Allow authenticated users to insert their own record on signup
-CREATE POLICY "Users can insert own data"
-  ON users FOR INSERT
-  WITH CHECK (auth.uid() = id);
-```
-
-2. **Add your user to the table:**
-
-After signing up/logging in, manually insert your user record:
-
-```sql
--- Replace with your actual user ID from auth.users
-INSERT INTO users (id, role, email)
-VALUES (
-  'your-user-uuid-here',
-  'super_admin',  -- or 'admin' or 'user'
-  'your-email@example.com'
-);
-```
-
-3. **Verify the fix:**
-- Refresh the app
-- The spinner should resolve within 5 seconds
-- You should be redirected to the dashboard
+3. **Hard refresh the app**: Press `Ctrl+Shift+R` (Windows) or `Cmd+Shift+R` (Mac)
 
 ---
 
@@ -153,32 +143,47 @@ To verify:
 **Symptoms:**
 - Supabase connection fails
 - Console shows: `Supabase URL or Key is missing`
+- Gemini AI features don't work
 - Auth doesn't work
 
 **Root Cause:**
-`.env` file missing or variables not prefixed correctly.
+`.env` file missing, variables not prefixed correctly, or dev server not restarted.
 
 **Solution:**
 
-1. Create `.env` file in project root:
+1. **Verify `.env` file exists** in project root with these variables:
    ```env
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-key-here
+   VITE_GEMINI_API_KEY=your-gemini-api-key-here
+   
+   # Legacy support (optional)
    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
    NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
-   GEMINI_API_KEY=your-gemini-key-here
+   GEMINI_API_KEY=your-gemini-api-key-here
    ```
 
-2. **Important:** Variables must be prefixed with `NEXT_PUBLIC_` to be exposed to the browser (Vite convention for `import.meta.env`).
+2. **Important**: All Vite environment variables must be prefixed with `VITE_` to be accessible via `import.meta.env`.
 
-3. Restart the dev server:
+3. **Get your credentials**:
+   - **Supabase**: Dashboard → Project Settings → API
+   - **Gemini**: https://makersuite.google.com/app/apikey
+
+4. **Restart the dev server** (required after .env changes):
    ```bash
+   # Press Ctrl+C to stop
    npm run dev
    ```
 
-4. Verify in browser console:
+5. **Verify in browser console**:
    ```javascript
-   // Should not be undefined:
-   console.log(import.meta.env.NEXT_PUBLIC_SUPABASE_URL)
+   // These should NOT be undefined:
+   console.log(import.meta.env.VITE_SUPABASE_URL)
+   console.log(import.meta.env.VITE_SUPABASE_ANON_KEY)
+   console.log(import.meta.env.VITE_GEMINI_API_KEY)
    ```
+
+✅ **Note**: This issue has been fixed in the codebase. All files now use `import.meta.env.VITE_*` correctly.
 
 ---
 

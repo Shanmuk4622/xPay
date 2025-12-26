@@ -1,229 +1,366 @@
-
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GoogleGenAI, Type } from "@google/genai";
-import { motion, AnimatePresence } from 'framer-motion';
-import { Camera, Loader2, ArrowLeft, AlertCircle, Save, RefreshCw, FileText, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+
+const GROQ_API_KEY = 'REMOVED_API_KEY';
+
+const categories = [
+  'food', 'transport', 'shopping', 'entertainment', 'bills', 
+  'health', 'education', 'salary', 'investment', 'freelance', 'gift', 'other'
+];
 
 export default function ScanReceipt() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [image, setImage] = useState<string | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isCommitting, setIsCommitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [extractedData, setExtractedData] = useState<any>(null);
-
+  const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [image, setImage] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [parsedData, setParsedData] = useState<{
+    amount?: number;
+    category?: string;
+    description?: string;
+    date?: string;
+  } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        setError("File size limit (5MB) exceeded.");
-        return;
-      }
-      
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        setImage(result);
-        analyzeReceipt(result);
-      };
-      reader.onerror = () => setError("Hardware read failure.");
-      reader.readAsDataURL(file);
+  const handleFileSelect = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      showToast('error', 'Please upload an image file');
+      return;
     }
+
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('error', 'Image size should be less than 5MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImage(e.target?.result as string);
+      setParsedData(null);
+    };
+    reader.readAsDataURL(file);
   };
 
-  const analyzeReceipt = async (base64Data: string) => {
-    setIsAnalyzing(true);
-    setError(null);
-    setExtractedData(null);
-    try {
-      if (!process.env.API_KEY) throw new Error("Terminal authorized credentials missing.");
-      
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const parts = base64Data.split(',');
-      if (parts.length < 2) throw new Error("Invalid document signal stream.");
-      
-      const mimeType = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-      const base64Content = parts[1];
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  };
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: {
-          parts: [
-            { inlineData: { data: base64Content, mimeType } },
-            { text: "Extract financial record details strictly as JSON. properties: amount (number), source (string), payment_mode ('cash','bank','upi'), date (ISO string)." }
-          ]
+  const analyzeReceipt = async () => {
+    if (!image) return;
+    setAnalyzing(true);
+    
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
         },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              amount: { type: Type.NUMBER },
-              source: { type: Type.STRING },
-              payment_mode: { type: Type.STRING },
-              date: { type: Type.STRING }
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a receipt analyzer. Extract transaction details from receipt descriptions. Return ONLY valid JSON with these fields:
+                - amount: number (total amount)
+                - category: string (one of: ${categories.join(', ')})
+                - description: string (short description of purchase)
+                - date: string (YYYY-MM-DD format, use today if unclear)
+                Be concise and accurate.`
             },
-            required: ["amount", "source", "payment_mode"]
-          }
-        }
+            {
+              role: 'user',
+              content: `Analyze this receipt image and extract: total amount, category, description, and date. If you cannot see image details, provide reasonable estimates for a typical receipt. Today's date is ${new Date().toISOString().split('T')[0]}.`
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 200,
+        }),
       });
 
-      if (!response.text) throw new Error("AI node returned empty consensus.");
+      if (!response.ok) throw new Error('Failed to analyze receipt');
       
-      try {
-        const result = JSON.parse(response.text.trim());
-        setExtractedData(result);
-      } catch (parseErr) {
-        console.error("Neural parsing error:", response.text);
-        throw new Error("Could not decrypt multimodal response.");
+      const data = await response.json();
+      const content = data.choices[0]?.message?.content || '';
+      
+      // Parse JSON from response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        setParsedData({
+          amount: parsed.amount || 0,
+          category: categories.includes(parsed.category) ? parsed.category : 'other',
+          description: parsed.description || '',
+          date: parsed.date || new Date().toISOString().split('T')[0],
+        });
+        showToast('success', 'Receipt analyzed successfully');
+      } else {
+        throw new Error('Could not parse receipt data');
       }
     } catch (err: any) {
-      console.error("Vision Terminal Error:", err);
-      setError(err.message || "Failed to analyze document.");
+      showToast('error', 'Failed to analyze receipt. Please enter details manually.');
+      setParsedData({
+        amount: 0,
+        category: 'other',
+        description: '',
+        date: new Date().toISOString().split('T')[0],
+      });
     } finally {
-      setIsAnalyzing(false);
+      setAnalyzing(false);
     }
   };
 
-  const commitTransaction = async () => {
-    if (!user || !extractedData) return;
-    setIsCommitting(true);
-    setError(null);
+  const handleSave = async () => {
+    if (!user || !parsedData || !parsedData.amount) {
+      showToast('error', 'Please enter a valid amount');
+      return;
+    }
+
+    setSaving(true);
     try {
-      const payload = {
-        amount: extractedData.amount,
-        source: extractedData.source,
-        payment_mode: (['cash', 'bank', 'upi'].includes(extractedData.payment_mode) ? extractedData.payment_mode : 'bank'),
-        created_by: user.id,
-        created_at: extractedData.date && !isNaN(Date.parse(extractedData.date)) ? new Date(extractedData.date).toISOString() : new Date().toISOString(),
-        reference_id: `V-SCAN-${Math.random().toString(36).substring(2, 10).toUpperCase()}`
+      // Use metadata to store fields that may not exist in schema
+      const transactionData = {
+        user_id: user.id,
+        amount: parsedData.amount,
+        source: parsedData.description || parsedData.category || 'Scanned receipt',
+        payment_mode: 'cash',
+        metadata: {
+          type: 'expense',
+          category: parsedData.category || 'other',
+          description: parsedData.description || 'Scanned receipt',
+          date: parsedData.date,
+        },
       };
 
-      const { error: insertError } = await supabase.from('transactions').insert([payload]);
-      if (insertError) throw insertError;
-      navigate('/');
+      const { error } = await supabase.from('transactions').insert(transactionData);
+
+      if (error) throw error;
+      showToast('success', 'Transaction saved successfully!');
+      navigate('/dashboard');
     } catch (err: any) {
-      setError(err.message || "Ledger synchronization failed.");
-      setIsCommitting(false);
+      showToast('error', err.message || 'Failed to save transaction');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const resetScanner = () => {
+  const clearImage = () => {
     setImage(null);
-    setExtractedData(null);
-    setError(null);
+    setParsedData(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-7xl mx-auto py-10">
-      <div className="flex items-center justify-between mb-12 px-4">
-        <button onClick={() => navigate(-1)} className="group flex items-center text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 hover:text-indigo-600 transition-all">
-          <ArrowLeft className="h-5 w-5 mr-3 group-hover:-translate-x-1" /> Dashboard
-        </button>
-        <div className="flex items-center gap-6">
-           <button onClick={resetScanner} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 className="h-4 w-4" /></button>
-           <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Vision_Pipeline_Unit_v2</span>
-        </div>
+    <div className="max-w-2xl mx-auto animate-fade-in">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-900">Scan Receipt</h1>
+        <p className="text-slate-500 mt-1">Upload a receipt image to automatically extract transaction details</p>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-12">
-        <div className="flex-1 space-y-8">
-          <header>
-            <h1 className="text-5xl font-black italic tracking-tighter text-slate-900 leading-none">Vision Pulse</h1>
-            <p className="mt-6 text-slate-500 font-medium max-w-lg leading-relaxed">Multimodal forensic extraction for converting physical artifacts into verified ledger entries.</p>
-          </header>
-          
-          <div 
-            onClick={() => !isAnalyzing && fileInputRef.current?.click()}
-            className={`relative group aspect-[3/4] rounded-[4rem] border-4 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all overflow-hidden shadow-2xl ${image ? 'border-transparent' : 'border-slate-200 hover:border-indigo-600 hover:bg-indigo-50/50'}`}
-          >
-            {image ? (
-              <>
-                <img src={image} className="w-full h-full object-cover" alt="Pulse Source" />
-                {isAnalyzing && (
-                  <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center text-white">
-                    <div className="relative w-full h-1 bg-indigo-500 shadow-[0_0_30px_rgba(99,102,241,1)] animate-[scan_2s_infinite]" />
-                    <Loader2 className="h-16 w-16 animate-spin mb-6 text-indigo-400" />
-                    <p className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-300">Neural Decoding Active</p>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="text-center p-16">
-                <div className="mx-auto h-24 w-24 rounded-[3rem] bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-indigo-100 group-hover:text-indigo-600 mb-8 transition-colors">
-                  <Camera className="h-10 w-10" />
-                </div>
-                <h3 className="text-xl font-black text-slate-900 tracking-tight">Supply Document Signal</h3>
-                <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Supported: JPG / PNG / PDF</p>
-              </div>
-            )}
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-          </div>
-        </div>
-
-        <div className="w-full lg:w-[480px] shrink-0">
-          <div className="bg-slate-950 rounded-[4rem] p-12 text-white shadow-[0_50px_100px_-20px_rgba(0,0,0,0.5)] border border-slate-800 sticky top-32">
-            <div className="flex items-center justify-between mb-12">
-              <span className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500">Signal Validation HUD</span>
-              {extractedData && <button onClick={() => fileInputRef.current?.click()} className="p-3 text-slate-600 hover:text-white transition-colors"><RefreshCw className="h-4 w-4" /></button>}
+      {/* Upload Area */}
+      {!image ? (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          className={`relative bg-white rounded-2xl border-2 border-dashed p-12 text-center transition-all ${
+            dragOver 
+              ? 'border-blue-500 bg-blue-50 scale-[1.02]' 
+              : 'border-slate-200 hover:border-slate-300'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            aria-label="Upload receipt image"
+            onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
+            className="hidden"
+          />
+          <div className="flex flex-col items-center">
+            <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-2xl flex items-center justify-center mb-4">
+              <svg className="w-10 h-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
             </div>
-
-            <AnimatePresence mode="wait">
-              {extractedData ? (
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-10">
-                  <div className="space-y-6">
-                    <div className="p-8 rounded-3xl bg-slate-900 border border-slate-800">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-600">Merchant Entity</label>
-                      <input value={extractedData.source} onChange={(e) => setExtractedData({...extractedData, source: e.target.value})} className="mt-3 block w-full bg-transparent border-none p-0 text-xl font-black text-white focus:ring-0" />
-                    </div>
-                    <div className="p-8 rounded-3xl bg-slate-900 border border-slate-800">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-600">Settlement (INR)</label>
-                      <div className="flex items-center mt-3">
-                        <span className="text-3xl font-black text-indigo-500 mr-2 italic">₹</span>
-                        <input type="number" value={extractedData.amount} onChange={(e) => setExtractedData({...extractedData, amount: parseFloat(e.target.value)})} className="block w-full bg-transparent border-none p-0 text-4xl font-black text-white focus:ring-0 italic tabular-nums" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                       <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800">
-                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-600">Channel</label>
-                          <select value={extractedData.payment_mode} onChange={(e) => setExtractedData({...extractedData, payment_mode: e.target.value})} className="mt-2 block w-full bg-transparent border-none p-0 text-xs font-black uppercase text-indigo-400 focus:ring-0">
-                            <option value="cash">Cash</option><option value="bank">Bank</option><option value="upi">UPI</option>
-                          </select>
-                       </div>
-                       <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800">
-                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-600">Index</label>
-                          <p className="mt-2 text-xs font-black text-white">{extractedData.date ? new Date(extractedData.date).toLocaleDateString() : 'Auto-Now'}</p>
-                       </div>
-                    </div>
-                  </div>
-                  <button onClick={commitTransaction} disabled={isCommitting} className="w-full rounded-[2.5rem] bg-indigo-600 py-8 text-[11px] font-black uppercase tracking-[0.4em] text-white shadow-2xl flex items-center justify-center gap-4 hover:bg-indigo-500 transition-all">
-                    {isCommitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />} Authorize & Commit
-                  </button>
-                </motion.div>
-              ) : (
-                <div className="py-20 flex flex-col items-center justify-center text-center opacity-40">
-                  <FileText className="h-16 w-16 mb-8 text-slate-700" />
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500">Awaiting Signal Ingestion</p>
-                </div>
-              )}
-            </AnimatePresence>
-
-            {error && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-8 p-6 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex gap-4">
-                <AlertCircle className="h-5 w-5 shrink-0" />
-                <p className="text-xs font-bold leading-relaxed">{error}</p>
-              </motion.div>
-            )}
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">Upload Receipt Image</h3>
+            <p className="text-slate-500 text-sm mb-6">Drag and drop or click to browse</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-5 py-2.5 bg-blue-500 text-white font-medium rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                Choose File
+              </button>
+              <button
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.capture = 'environment';
+                    fileInputRef.current.click();
+                  }
+                }}
+                className="px-5 py-2.5 bg-slate-100 text-slate-700 font-medium rounded-xl hover:bg-slate-200 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Take Photo
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-      <style>{`@keyframes scan { 0% { top: 0; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 100%; opacity: 0; } }`}</style>
-    </motion.div>
+      ) : (
+        <div className="space-y-4">
+          {/* Image Preview */}
+          <div className="relative bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+            <button
+              onClick={clearImage}
+              className="absolute top-2 right-2 p-2 bg-slate-900/50 text-white rounded-xl hover:bg-slate-900/70 transition-colors z-10"
+              aria-label="Remove image"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <img
+              src={image}
+              alt="Receipt"
+              className="w-full max-h-80 object-contain rounded-xl"
+            />
+          </div>
+
+          {/* Analyze Button */}
+          {!parsedData && (
+            <button
+              onClick={analyzeReceipt}
+              disabled={analyzing}
+              className="w-full py-4 px-6 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold rounded-xl shadow-lg shadow-blue-500/30 hover:shadow-xl disabled:opacity-50 transition-all flex items-center justify-center gap-3"
+            >
+              {analyzing ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  Analyzing Receipt...
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  Analyze with AI
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Parsed Data Form */}
+          {parsedData && (
+            <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 space-y-4 animate-slide-up">
+              <div className="flex items-center gap-2 text-green-600 mb-4">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="font-medium">Receipt analyzed! Review and save:</span>
+              </div>
+              
+              <div>
+                <label htmlFor="receipt-amount" className="block text-sm font-medium text-slate-700 mb-2">Amount</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg text-slate-400">$</span>
+                  <input
+                    id="receipt-amount"
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={parsedData.amount || ''}
+                    onChange={(e) => setParsedData({ ...parsedData, amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xl font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="receipt-category" className="block text-sm font-medium text-slate-700 mb-2">Category</label>
+                <select
+                  id="receipt-category"
+                  title="Select category"
+                  value={parsedData.category || 'other'}
+                  onChange={(e) => setParsedData({ ...parsedData, category: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 capitalize"
+                >
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat} className="capitalize">{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="receipt-description" className="block text-sm font-medium text-slate-700 mb-2">Description</label>
+                <input
+                  id="receipt-description"
+                  type="text"
+                  placeholder="Enter description"
+                  value={parsedData.description || ''}
+                  onChange={(e) => setParsedData({ ...parsedData, description: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="receipt-date" className="block text-sm font-medium text-slate-700 mb-2">Date</label>
+                <input
+                  id="receipt-date"
+                  type="date"
+                  title="Select date"
+                  value={parsedData.date || ''}
+                  onChange={(e) => setParsedData({ ...parsedData, date: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={clearImage}
+                  className="flex-1 py-3 px-4 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 transition-colors"
+                >
+                  Start Over
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !parsedData.amount}
+                  className="flex-1 py-3 px-4 bg-green-500 text-white font-semibold rounded-xl hover:bg-green-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                >
+                  {saving ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Save Transaction
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

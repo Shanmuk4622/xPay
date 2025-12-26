@@ -1,186 +1,200 @@
+import React, { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
-import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { useAuth, AppRole } from '../context/AuthContext';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Wallet, 
-  LogOut, 
-  LayoutDashboard, 
-  Search, 
-  PlusCircle, 
-  Menu,
-  X,
-  Zap,
-  Cpu,
-  Camera,
-  Command
-} from 'lucide-react';
+interface NavItem {
+  path: string;
+  label: string;
+  icon: React.ReactNode;
+  roles?: ('super_admin' | 'admin' | 'user')[];
+}
 
-export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { role, signOut } = useAuth();
-  const navigate = useNavigate();
+const navItems: NavItem[] = [
+  {
+    path: '/dashboard',
+    label: 'Dashboard',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+      </svg>
+    ),
+  },
+  {
+    path: '/new-transaction',
+    label: 'New Transaction',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+      </svg>
+    ),
+  },
+  {
+    path: '/scan-receipt',
+    label: 'Scan Receipt',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
+  },
+  {
+    path: '/ai-audit',
+    label: 'AI Audit',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+      </svg>
+    ),
+  },
+  {
+    path: '/admin-search',
+    label: 'Admin Search',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      </svg>
+    ),
+    roles: ['super_admin', 'admin'],
+  },
+];
+
+interface LayoutProps {
+  children: React.ReactNode;
+}
+
+export default function Layout({ children }: LayoutProps) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { user, role, signOut } = useAuth();
   const location = useLocation();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
-  const [globalSearch, setGlobalSearch] = useState('');
+  const navigate = useNavigate();
 
-  const navItems: Array<{ label: string; path: string; icon: any; roles?: AppRole[] }> = [
-    { label: 'Pulse', path: '/', icon: LayoutDashboard },
-    { label: 'Scanner', path: '/admin/scan', icon: Camera, roles: ['admin', 'super_admin'] },
-    { label: 'Ledger', path: '/admin/search', icon: Search, roles: ['admin', 'super_admin'] },
-    { label: 'Intelligence', path: '/intelligence', icon: Cpu, roles: ['admin', 'super_admin'] },
-    { label: 'Entry', path: '/transactions/new', icon: PlusCircle, roles: ['admin', 'super_admin'] },
-  ];
-
-  const filteredNav = navItems.filter(item => 
-    !item.roles || (role && item.roles.includes(role))
-  );
-
-  const handleGlobalSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!globalSearch.trim()) return;
-    navigate(`/admin/search?q=${encodeURIComponent(globalSearch.trim())}`);
-    setGlobalSearch('');
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/login');
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        const searchInput = document.getElementById('global-command-search');
-        searchInput?.focus();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  const filteredNavItems = navItems.filter((item) => {
+    if (!item.roles) return true;
+    return role && item.roles.includes(role);
+  });
 
-  const isAdmin = role === 'admin' || role === 'super_admin';
+  const userInitial = user?.email?.charAt(0).toUpperCase() || 'U';
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
-      <nav className="sticky top-0 z-[100] border-b border-slate-200 bg-white/70 backdrop-blur-2xl no-print">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-20 justify-between items-center">
-            <div className="flex items-center gap-10">
-              <Link to="/" className="flex items-center group">
-                <motion.div 
-                  whileHover={{ scale: 1.05, rotate: 2 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 shadow-xl"
-                >
-                  <Wallet className="h-5 w-5 text-white" />
-                </motion.div>
-                <span className="ml-4 text-2xl font-black tracking-tighter text-slate-900 hidden sm:block">
-                  FinTrack<span className="text-indigo-600">Pro</span>
-                </span>
-              </Link>
+    <div className="min-h-screen bg-slate-50">
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-              <div className="hidden lg:flex items-center gap-2">
-                {filteredNav.map(item => (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={`relative px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all ${
-                      location.pathname === item.path 
-                      ? 'text-indigo-600' 
-                      : 'text-slate-400 hover:text-slate-900'
-                    }`}
-                  >
-                    {location.pathname === item.path && (
-                      <motion.div layoutId="nav-pill" className="absolute inset-0 bg-indigo-50 rounded-2xl -z-10" />
-                    )}
-                    <span className="flex items-center gap-2">
-                      <item.icon className="h-3 w-3" />
+      {/* Sidebar */}
+      <aside
+        className={`fixed top-0 left-0 h-full w-64 bg-white border-r border-slate-200 z-50 transform transition-transform duration-300 lg:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex flex-col h-full">
+          {/* Logo */}
+          <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-200">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-slate-900">xPay</h1>
+              <p className="text-xs text-slate-500">Finance Tracker</p>
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 overflow-y-auto px-4 py-4">
+            <ul className="space-y-1">
+              {filteredNavItems.map((item) => {
+                const isActive = location.pathname === item.path;
+                return (
+                  <li key={item.path}>
+                    <Link
+                      to={item.path}
+                      onClick={() => setSidebarOpen(false)}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                        isActive
+                          ? 'bg-blue-50 text-blue-600'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`}
+                    >
+                      <span className={isActive ? 'text-blue-500' : 'text-slate-400'}>
+                        {item.icon}
+                      </span>
                       {item.label}
-                    </span>
-                  </Link>
-                ))}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+
+          {/* User section */}
+          <div className="border-t border-slate-200 p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-semibold">
+                {userInitial}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-900 truncate">{user?.email}</p>
+                <p className="text-xs text-slate-500 capitalize">{role || 'User'}</p>
               </div>
             </div>
+            <button
+              onClick={handleSignOut}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </aside>
 
-            <div className="flex items-center gap-6">
-              {isAdmin && (
-                <form onSubmit={handleGlobalSearch} className="hidden md:flex relative items-center group">
-                   <div className="absolute left-4 pointer-events-none">
-                      <Search className="h-3.5 w-3.5 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
-                   </div>
-                   <input 
-                     id="global-command-search"
-                     type="text"
-                     value={globalSearch}
-                     onChange={(e) => setGlobalSearch(e.target.value)}
-                     placeholder="Global Search..."
-                     className="bg-slate-100 border-none rounded-2xl h-10 pl-10 pr-16 text-[10px] font-black uppercase tracking-widest text-slate-900 placeholder:text-slate-400 focus:ring-4 focus:ring-indigo-600/5 transition-all w-48 focus:w-80 shadow-inner"
-                   />
-                   <div className="absolute right-3 hidden md:flex items-center gap-1 bg-white px-1.5 py-0.5 rounded-md border border-slate-200 opacity-50">
-                      <Command className="h-2 w-2 text-slate-500" />
-                      <span className="text-[8px] font-black text-slate-500">K</span>
-                   </div>
-                </form>
-              )}
+      {/* Main content */}
+      <div className="lg:pl-64">
+        {/* Top bar */}
+        <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200">
+          <div className="flex items-center justify-between h-16 px-4 lg:px-8">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 -ml-2 text-slate-600 hover:text-slate-900 lg:hidden"
+              aria-label="Open menu"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
 
-              <div className="flex items-center gap-4">
-                <motion.button
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => signOut()}
-                  className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-50 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all border border-slate-200"
-                >
-                  <LogOut className="h-5 w-5" />
-                </motion.button>
-                <button className="lg:hidden h-10 w-10 flex items-center justify-center rounded-xl bg-slate-900 text-white" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-                  {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-                </button>
+            <div className="lg:hidden">
+              <h1 className="text-lg font-bold text-slate-900">xPay</h1>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="hidden sm:flex items-center gap-2 text-sm text-slate-600">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span>Online</span>
               </div>
             </div>
           </div>
-        </div>
-        
-        <AnimatePresence>
-          {isMobileMenuOpen && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="lg:hidden bg-white border-t border-slate-100 overflow-hidden"
-            >
-              <div className="p-4 space-y-2">
-                {filteredNav.map(item => (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setIsMobileMenuOpen(false)}
-                    className={`flex items-center gap-4 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest ${
-                      location.pathname === item.path ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500 hover:bg-slate-50'
-                    }`}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
-                  </Link>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </nav>
+        </header>
 
-      <main className="flex-grow">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={location.pathname}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8"
-          >
-            {children}
-          </motion.div>
-        </AnimatePresence>
-      </main>
-
-      <footer className="py-12 border-t border-slate-200 bg-white text-center">
-        <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-300">Authorized Node • ISO-27001 Compliance</p>
-      </footer>
+        {/* Page content */}
+        <main className="p-4 lg:p-8">
+          {children}
+        </main>
+      </div>
     </div>
   );
-};
+}
