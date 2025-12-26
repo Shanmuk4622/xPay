@@ -10,11 +10,16 @@
       "DOM.Iterable"
     ],
     "skipLibCheck": true,
+<<<<<<< HEAD
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "types": [
       "node",
       "vite/client"
+=======
+    "types": [
+      "node"
+>>>>>>> cc9c060f754b6fed0940fb82a67e636da0aafebb
     ],
     "moduleResolution": "bundler",
     "isolatedModules": true,

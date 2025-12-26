@@ -123,4 +123,8 @@ export default function ResetPassword() {
       </div>
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> cc9c060f754b6fed0940fb82a67e636da0aafebb
